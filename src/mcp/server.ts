@@ -8,7 +8,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { config, CRM_TARGETS, DOC_TARGETS, TASKS_TARGETS } from '../config.js';
 import { liveLineText, sayInMeeting, watchMeeting } from '../live.js';
-import { llmConfigured } from '../llm/index.js';
+import { llmConfigured, llmLabel } from '../llm/index.js';
 import { spread } from '../media/ffmpeg.js';
 import {
   agentPrompt, cancelMeeting, endMeeting, importMeetily, importRecording, joinMeeting, runAgentHook, spawnWorker,
@@ -97,7 +97,7 @@ export function createServer(): McpServer {
     });
     const live = actOf(call) === 'after' ? ''
       : llmConfigured()
-        ? `\nIn the meeting the agent answers by itself (${config.llm}:${config.llmModel}) when someone says "${call.agent_name}, …" or mentions it in the chat.`
+        ? `\nIn the meeting the agent answers by itself (${llmLabel()}) when someone says "${call.agent_name}, …" or mentions it in the chat.`
         : `\nIn the meeting you are the agent's brain: loop watch_meeting (call_id ${call.id}) and answer each mention with send_meeting_message; when nobody watches, it answers "noted" and keeps the request for after the call.`;
     return text(`${callSummary(call)}\n\nThe agent is on its way. If the meeting has a lobby, admit "${call.agent_name}". When the person is done, call end_meeting (call_id ${call.id}).${live}`);
   }));
@@ -441,7 +441,7 @@ export async function doctor(): Promise<string> {
   const ff = await run(config.ffmpeg, ['-version'], 'ffmpeg', 10_000).then(() => true).catch(() => false);
   lines.push(`${ok(ff)} ffmpeg${ff ? '' : ' — install it (brew install ffmpeg)'}`);
   lines.push(`${ok(config.asr !== 'none')} transcription: ${config.asr === 'whisper-cpp' ? `whisper.cpp (${config.whisperModel})` : config.asr === 'openai' ? `${config.asrBaseUrl} (${config.asrModel})` : 'none — set OMA_WHISPER_MODEL or OMA_ASR_API_KEY (meetily imports don\'t need it)'}`);
-  lines.push(`${llmConfigured() ? '✓' : '·'} planning model: ${llmConfigured() ? `${config.llm}:${config.llmModel}` : 'none — the connected agent builds the plan (get_call_context + save_plan)'}`);
+  lines.push(`${llmConfigured() ? '✓' : '·'} planning model: ${llmConfigured() ? `${llmLabel()}${config.llm === 'claude-code' ? ' (Claude Code on this machine)' : ''}` : 'none — the connected agent builds the plan (get_call_context + save_plan); OMA_LLM_PROVIDER=claude-code uses Claude Code here'}`);
   const gh = !!config.githubToken || await run('gh', ['auth', 'status'], 'gh', 10_000).then(() => true).catch(() => false);
   lines.push(`${gh ? '✓' : '·'} GitHub: ${config.githubToken ? 'GITHUB_TOKEN' : gh ? 'gh CLI' : 'not set (only needed for GitHub issues)'}`);
   lines.push(`  acts: ${config.act}${config.act !== 'after' ? ` (in the meeting: ${llmConfigured() ? 'the planning model answers' : 'the connected agent answers via watch_meeting'})` : ''}`);

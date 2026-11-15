@@ -1,11 +1,15 @@
 // The planning model, when one is configured. Two wire formats cover most
-// options: Anthropic's Messages API, and the OpenAI-compatible chat API
-// (OpenAI, Ollama, LM Studio, OpenRouter, vLLM…). Plain fetch, no SDK.
+// APIs: Anthropic's Messages API, and the OpenAI-compatible chat API (OpenAI,
+// Ollama, LM Studio, OpenRouter, vLLM…), with plain fetch. Or a local agent:
+// Claude Code (`claude -p`, its own sign-in) or any command that reads the
+// prompt on stdin (codex exec, gemini…).
 //
 // Without a configured model nothing here runs: the connected agent (Claude
 // Code, Cursor, Codex…) reads the call with get_call_context and saves the plan.
 
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { runClaude, type ClaudeBlock } from '../agents/claude.js';
+import { runCommand } from '../agents/command.js';
 import { config } from '../config.js';
 import type { PlanBlock } from '../plan/prompt.js';
 
@@ -21,10 +25,14 @@ export class LlmError extends Error {
 }
 
 export function llmConfigured(): boolean {
+  if (config.llm === 'claude-code') return true;
+  if (config.llm === 'command') return !!config.llmCommand;
   return !!config.llm && !!config.llmModel;
 }
 
 export function llmLabel(): string {
+  if (config.llm === 'claude-code') return `claude-code${config.llmModel ? `:${config.llmModel}` : ''}`;
+  if (config.llm === 'command') return `command:${config.llmCommand?.split(/\s+/)[0] ?? ''}`;
   return `${config.llm}:${config.llmModel}`;
 }
 
@@ -35,10 +43,55 @@ function imageData(file: string): string {
 }
 
 export async function chat(system: string, turns: Turn[], opts: ChatOptions = {}): Promise<ChatResult> {
-  if (!config.llm || !config.llmModel) {
-    throw new LlmError('llm_not_configured', 'No planning model configured (OMA_LLM_PROVIDER + OMA_LLM_MODEL). Use get_call_context and save_plan to build the plan in the connected agent instead.');
+  if (!llmConfigured()) {
+    throw new LlmError('llm_not_configured', 'No planning model configured (OMA_LLM_PROVIDER: claude-code, or an API with OMA_LLM_MODEL). Use get_call_context and save_plan to build the plan in the connected agent instead.');
   }
+  if (config.llm === 'claude-code') return claudeCode(system, turns, opts);
+  if (config.llm === 'command') return command(system, turns, opts);
   return config.llm === 'anthropic' ? anthropic(system, turns, opts) : openaiCompatible(system, turns, opts);
+}
+
+/** Earlier turns (a retry after an answer) folded into one message: the local
+ *  agents take one prompt. */
+function oneMessage(turns: Turn[]): PlanBlock[] {
+  const out: PlanBlock[] = [];
+  for (const t of turns) {
+    const blocks: PlanBlock[] = typeof t.content === 'string' ? [{ type: 'text', text: t.content }] : t.content;
+    if (t.role === 'assistant') {
+      const text = blocks.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+      out.push({ type: 'text', text: `<your_previous_answer>\n${text}\n</your_previous_answer>` });
+    } else out.push(...blocks);
+  }
+  return out;
+}
+
+async function claudeCode(system: string, turns: Turn[], opts: ChatOptions): Promise<ChatResult> {
+  mkdirSync(config.home, { recursive: true });
+  const content: ClaudeBlock[] = oneMessage(turns).map((b) => (b.type === 'text'
+    ? { type: 'text', text: b.text }
+    : { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageData(b.file) } }));
+  try {
+    const r = await runClaude({
+      content, cwd: config.home, systemPrompt: system, tools: [], strictMcp: true, persist: false,
+      model: config.llmModel, timeoutMs: opts.timeoutMs ?? config.llmTimeoutMs,
+    }).result;
+    if (r.isError) throw new LlmError('llm_failed', `Claude Code: ${r.text.slice(0, 400) || 'failed'}`);
+    return { text: r.text.trim(), model: `claude-code:${r.model ?? 'default'}`, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
+  } catch (e) {
+    throw e instanceof LlmError ? e : new LlmError('llm_failed', (e as Error).message);
+  }
+}
+
+async function command(system: string, turns: Turn[], opts: ChatOptions): Promise<ChatResult> {
+  mkdirSync(config.home, { recursive: true });
+  // Text only: a screen goes as its file, for agents that can open files.
+  const body = oneMessage(turns).map((b) => (b.type === 'text' ? b.text : `[screen ${b.label}: ${b.file}]`)).join('\n\n');
+  try {
+    const text = await runCommand(config.llmCommand!, `${system}\n\n${body}`, { cwd: config.home, timeoutMs: opts.timeoutMs ?? config.llmTimeoutMs }).result;
+    return { text: text.trim(), model: llmLabel(), inputTokens: 0, outputTokens: 0 };
+  } catch (e) {
+    throw new LlmError('llm_failed', (e as Error).message);
+  }
 }
 
 async function post(url: string, headers: Record<string, string>, body: unknown, timeoutMs: number): Promise<Record<string, unknown>> {
