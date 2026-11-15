@@ -2,8 +2,15 @@
 //   status.json   { state: starting|joining|in_call|leaving|done|failed, step, error, participants, updated_at }
 //   control.json  written by the host: { leave: true } → leave and save; { discard: true } → leave, save nothing
 //   audio.m4a / recording.mp4 / timeline.json / exit.json   the result, written at the end
+// While in the call (the agent acting in the meeting):
+//   live.jsonl     appended by the bot, one JSON event per line:
+//                    {type:"caption", seg, speaker, text, final, at}   a turn (non-final ones are replaced by the next with the same seg)
+//                    {type:"chat", speaker, text, at}                  a chat message from someone else
+//                    {type:"sent", id, ok, text?, error?, at}          the result of a host command
+//                    {type:"live", captions, chat, at}                 what the bot can read and post
+//   commands.jsonl appended by the host: {id, type:"chat", text}; the bot runs each one once, in order
 
-import { chownSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chownSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { log } from './logger.js';
@@ -59,6 +66,37 @@ export async function shouldLeave(): Promise<boolean> {
 
 export function shouldDiscard(): boolean {
   return control().discard === true;
+}
+
+/** One event in live.jsonl (best-effort: a failed write never stops the call). */
+export function appendLive(event: Record<string, unknown>): void {
+  try {
+    mkdirSync(config.outDir, { recursive: true });
+    appendFileSync(path.join(config.outDir, 'live.jsonl'), `${JSON.stringify({ ...event, at: event.at ?? Date.now() })}\n`);
+  } catch (e) {
+    log.warn({ error: (e as Error).message }, 'could not write live.jsonl');
+  }
+}
+
+export interface HostCommand { id: string; type: 'chat'; text: string }
+
+/** The host's commands after the first `skip` (commands.jsonl, append-only). */
+export function readCommands(skip: number): HostCommand[] {
+  const file = path.join(config.outDir, 'commands.jsonl');
+  if (!existsSync(file)) return [];
+  const out: HostCommand[] = [];
+  const lines = readFileSync(file, 'utf8').split('\n');
+  // A line still being written (no newline yet) waits for the next read.
+  const complete = lines.slice(0, -1);
+  for (const ln of complete.slice(skip)) {
+    try {
+      const c = JSON.parse(ln) as Partial<HostCommand>;
+      out.push({ id: String(c.id ?? ''), type: 'chat', text: String(c.text ?? '') });
+    } catch {
+      out.push({ id: '', type: 'chat', text: '' }); // unreadable: counted, skipped
+    }
+  }
+  return out;
 }
 
 export async function markFailed(step: string, message: string): Promise<void> {

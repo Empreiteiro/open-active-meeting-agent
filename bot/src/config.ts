@@ -24,6 +24,10 @@ export const config = {
   googleEmail: process.env.BOT_GOOGLE_EMAIL ?? '',
   googlePassword: process.env.BOT_GOOGLE_PASSWORD ?? '',
 
+  /** The agent acts in the meeting: the chat panel opens as it gets in (otherwise
+   *  only when the host asks it to post — the panel would cover the recorded screen). */
+  liveChat: process.env.LIVE_CHAT === '1',
+
   /** The agent records the screen by default: the plan uses what was shown. */
   recordVideo: process.env.RECORD_VIDEO !== '0',
   locale: process.env.BOT_LOCALE ?? 'en-US',

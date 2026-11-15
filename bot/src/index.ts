@@ -1,5 +1,6 @@
 // One meeting, one container:
-//   join → record (screen + audio) + track who speaks → notice the end → hand back
+//   join → record (screen + audio) + track who speaks + read the captions and
+//   chat live (live.jsonl) and post what the host asks → notice the end → hand back
 // Leaves its result in OUT_DIR (see handback.ts) and exits 0, or 1 on failure.
 // Ported from Queryable's meeting bot.
 
@@ -13,6 +14,7 @@ import { teamsDriver } from './teams.js';
 import { Recorder } from './recorder.js';
 import { ensureMeetingSinkRouting } from './pulse.js';
 import { SpeakerTracker } from './speakerTracker.js';
+import { LiveChannel } from './live.js';
 import {
   markInCall, markJoining, markFailed, uploadAndHandoff, shouldLeave, shouldDiscard, heartbeat, reportBotAuth, setStatus,
   type ExitInfo,
@@ -26,6 +28,7 @@ let browser: Browser | null = null;
 let context: BrowserContext | null = null;
 let recorder: Recorder | null = null;
 let tracker: SpeakerTracker | null = null;
+let live: LiveChannel | null = null;
 // The hand back runs ONCE, even when the normal end, a loop error and a signal race.
 let finalized = false;
 
@@ -37,6 +40,7 @@ async function finalizeAndUpload(reason: string, exit?: ExitInfo): Promise<boole
   if (!recorder) return false; // never started recording (the join failed)
   log.info({ reason }, 'finishing the recording');
   setStatus('leaving');
+  live?.stop();
   const exitInfo: ExitInfo = exit ?? { reason, recordedSec: Math.round(recorder.elapsed()) };
   try {
     await recorder.stop(); // SIGTERM to ffmpeg closes the MP4 properly
@@ -102,6 +106,10 @@ async function run(): Promise<boolean> {
   setTimeout(() => void ensureMeetingSinkRouting(), 20_000);
   tracker = new SpeakerTracker(page, driver, recorder);
   await tracker.start(captionsOn);
+  // The meeting as it happens (captions as turns, the chat) for the host, and
+  // the host's commands (post in the chat). Best-effort.
+  live = new LiveChannel(page, driver);
+  await live.start(captionsOn).catch((e) => log.warn({ error: (e as Error).message }, 'live: could not start (continuing)'));
   setTimeout(() => {
     void dumpRoster(page).then((r) => log.info({ roster: r }, 'roster'));
   }, 12_000);
@@ -120,13 +128,17 @@ async function run(): Promise<boolean> {
 
   try {
     while (true) {
-      await page.waitForTimeout(3_000);
+      // Every second: the live channel (captions, chat, the host's commands).
+      // Every third: the end checks.
+      await page.waitForTimeout(1_000);
       tick++;
+      await live?.pump();
+      if (tick % 3 !== 0) continue;
       if (Date.now() > deadline) { exitReason = 'max_duration'; break; }
       if (await shouldLeave()) { exitReason = shouldDiscard() ? 'cancelled' : 'manual'; break; }
       if (await driver.hasEnded(page)) { exitReason = 'ended'; break; }
       const count = await driver.participantCount(page);
-      if (tick % 10 === 0) void heartbeat(count);
+      if (tick % 30 === 0) void heartbeat(count);
       if (count >= 2) {
         if (!everSawOthers) log.info({ count }, 'other participants detected');
         everSawOthers = true;

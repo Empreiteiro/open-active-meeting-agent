@@ -1,5 +1,5 @@
 import type { Page } from 'patchright';
-import { MeetingDriver, firstVisible, clickRobust, gotoResilient, dumpControls, admissionDeadline } from './driver.js';
+import { MeetingDriver, ChatConfig, firstVisible, visibleOutside, clickRobust, gotoResilient, dumpControls, admissionDeadline } from './driver.js';
 import { log } from './logger.js';
 import { config } from './config.js';
 
@@ -159,6 +159,29 @@ const SEL = {
   ],
 };
 
+// The meeting chat (the agent acting in the meeting). Only best-effort: the
+// panel's text is read whole, so the selectors only need to find the panel,
+// the toolbar button and the message box.
+const CHAT: ChatConfig = {
+  panel: [
+    '[role="region"][aria-label*="mensagens" i]',
+    '[role="region"][aria-label*="messages" i]',
+    'aside[aria-label*="chat" i]',
+    '[role="complementary"]',
+  ],
+  open: [
+    'button[aria-label*="Chat com todos" i]',
+    'button[aria-label*="Chat with everyone" i]',
+    'button[aria-label*="Chat" i][aria-pressed="false"]',
+  ],
+  input: [
+    'textarea[aria-label*="Enviar uma mensagem" i]',
+    'textarea[aria-label*="Send a message" i]',
+    'textarea[placeholder*="mensagem" i]',
+    'textarea[placeholder*="message" i]',
+  ],
+};
+
 export const meetDriver: MeetingDriver = {
   provider: 'google_meet',
 
@@ -176,6 +199,8 @@ export const meetDriver: MeetingDriver = {
     line: ['[jsname="dsyhDe"]', '[class*="caption" i]', '[class*="Caption"]'],
     speaker: ['[class*="name" i]', '[class*="Name"]', 'span:first-child', 'div:first-child'],
   },
+
+  chatConfig: CHAT,
 
   async join(page: Page, displayName: string): Promise<void> {
     await page.goto('about:blank');
@@ -348,7 +373,8 @@ export const meetDriver: MeetingDriver = {
 
   async hasEnded(page: Page): Promise<boolean> {
     if (page.isClosed()) return true;
-    const sel = await firstVisible(page, SEL.ended, 500);
+    // Text in the captions or the chat is what people said, not Meet's end screen.
+    const sel = await visibleOutside(page, SEL.ended, [...meetDriver.captionConfig.region, ...CHAT.panel]);
     return sel !== null;
   },
 

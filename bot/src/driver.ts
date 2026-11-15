@@ -16,6 +16,18 @@ export interface CaptionConfig {
 }
 
 /**
+ * The meeting chat, for the agent acting in the meeting:
+ *   panel:  the open chat panel (its text is read for new messages)
+ *   open:   the toolbar button that opens it
+ *   input:  the message box (the message is sent with Enter)
+ */
+export interface ChatConfig {
+  panel: string[];
+  open: string[];
+  input: string[];
+}
+
+/**
  * Common contract between Google Meet and Teams. All the selector
  * fragility is isolated in the implementations (meet.ts / teams.ts) —
  * when the provider's UI changes, that is where you edit, nowhere else.
@@ -49,6 +61,72 @@ export interface MeetingDriver {
 
   /** Leaves the call cleanly (best-effort). */
   leave(page: Page): Promise<void>;
+
+  /** Chat selectors (optional: without them the agent can't use the chat). */
+  readonly chatConfig?: ChatConfig;
+}
+
+/**
+ * Like firstVisible, once, but ignores matches inside `outside` (the captions
+ * and the chat: what people say there must not pass for the meeting UI — a
+ * caption "the call ended" is not the end of the call).
+ */
+export async function visibleOutside(page: Page, selectors: string[], outside: string[]): Promise<string | null> {
+  for (const sel of selectors) {
+    try {
+      const all = page.locator(sel);
+      const n = Math.min(await all.count(), 5);
+      for (let i = 0; i < n; i++) {
+        const el = all.nth(i);
+        if (!(await el.isVisible().catch(() => false))) continue;
+        const inside = await el.evaluate((node, out) => out.some((o) => {
+          try { return !!(node as Element).closest(o); } catch { return false; }
+        }), outside).catch(() => false);
+        if (!inside) return sel;
+      }
+    } catch {
+      /* try the next one */
+    }
+  }
+  return null;
+}
+
+/** Opens the chat panel when it is closed. True when it is open. */
+export async function openChat(page: Page, chat: ChatConfig): Promise<boolean> {
+  if (await firstVisible(page, chat.input, 300)) return true;
+  const btn = await firstVisible(page, chat.open, 1_500);
+  if (!btn) return false;
+  await page.locator(btn).first().click({ timeout: 3_000 }).catch(() => {});
+  return (await firstVisible(page, chat.input, 4_000)) !== null;
+}
+
+/** Posts a message in the meeting chat. Throws when it could not. */
+export async function sendChat(page: Page, chat: ChatConfig, text: string): Promise<void> {
+  if (!(await openChat(page, chat))) throw new Error('chat unavailable (no chat button or message box)');
+  const sel = await firstVisible(page, chat.input, 2_000);
+  if (!sel) throw new Error('no message box');
+  const box = page.locator(sel).first();
+  await box.click({ timeout: 3_000 });
+  // Line breaks would send early: one paragraph.
+  await box.fill(text.replace(/\s*\n+\s*/g, ' ').slice(0, 2_000)).catch(async () => {
+    await page.keyboard.insertText(text.replace(/\s*\n+\s*/g, ' ').slice(0, 2_000));
+  });
+  await page.keyboard.press('Enter');
+  // Keyboard shortcuts (the captions' "c") must not land in the box later.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur()).catch(() => {});
+}
+
+/** The chat panel's visible text ('' when closed). */
+export async function chatText(page: Page, chat: ChatConfig): Promise<string> {
+  return page.evaluate((sels) => {
+    for (const s of sels) {
+      try {
+        const el = document.querySelector(s) as HTMLElement | null;
+        if (el && el.offsetParent !== null) return el.innerText || '';
+      } catch { /* invalid selector */ }
+    }
+    return '';
+  }, chat.panel).catch(() => '');
 }
 
 /** Tries several selectors in order; returns the first one that shows up. */

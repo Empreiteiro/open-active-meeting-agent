@@ -1,5 +1,5 @@
 import type { Page } from 'patchright';
-import { MeetingDriver, firstVisible, clickRobust, gotoResilient, dumpControls, admissionDeadline, pageEvidence } from './driver.js';
+import { MeetingDriver, ChatConfig, firstVisible, visibleOutside, clickRobust, gotoResilient, dumpControls, admissionDeadline, pageEvidence } from './driver.js';
 import { log } from './logger.js';
 import { config } from './config.js';
 
@@ -144,6 +144,30 @@ const SEL = {
   ],
 };
 
+// The meeting chat (the agent acting in the meeting). Best-effort: anonymous
+// guests may have no chat at all, depending on the organizer's policy.
+const CHAT: ChatConfig = {
+  panel: [
+    '[data-tid="message-pane-list-viewport"]',
+    '[data-tid="chat-pane-list"]',
+    '[data-tid="chat-pane"]',
+    '[role="complementary"]',
+  ],
+  open: [
+    '[data-tid="chat-button"]',
+    '#chat-button',
+    'button[aria-label*="Mostrar conversa" i]',
+    'button[aria-label*="Show conversation" i]',
+    'button[aria-label="Chat" i]',
+  ],
+  input: [
+    '[data-tid="ckeditor"][contenteditable="true"]',
+    'div[role="textbox"][contenteditable="true"]',
+    '[aria-label*="Digite uma mensagem" i]',
+    '[aria-label*="Type a message" i]',
+  ],
+};
+
 export const teamsDriver: MeetingDriver = {
   provider: 'microsoft_teams',
 
@@ -159,6 +183,8 @@ export const teamsDriver: MeetingDriver = {
     line: ['[data-tid*="caption" i]', '[class*="caption-item" i]', 'li', '[role="text"]'],
     speaker: ['[data-tid*="author" i]', '[class*="author" i]', '[class*="speaker" i]', 'span:first-child'],
   },
+
+  chatConfig: CHAT,
 
   async join(page: Page, displayName: string): Promise<void> {
     await gotoResilient(page, process.env.JOIN_URL!);
@@ -481,7 +507,8 @@ export const teamsDriver: MeetingDriver = {
 
   async hasEnded(page: Page): Promise<boolean> {
     if (page.isClosed()) return true;
-    const sel = await firstVisible(page, SEL.ended, 500);
+    // Text in the captions or the chat is what people said, not Teams' end screen.
+    const sel = await visibleOutside(page, SEL.ended, [...teamsDriver.captionConfig.region, ...CHAT.panel]);
     return sel !== null;
   },
 
