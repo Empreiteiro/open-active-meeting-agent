@@ -1,0 +1,34 @@
+{
+  "OMA_AGENT_NAME": "Meeting Agent",
+  "OMA_LANGUAGE": "en",
+  "OMA_AUTONOMY": "suggest",
+  "OMA_ACT": "after",
+  "OMA_LIVE_NAMES": "",
+
+  "OMA_WHISPER_MODEL": "",
+  "OMA_ASR_API_KEY": "",
+
+  "OMA_LLM_PROVIDER": "",
+  "OMA_LLM_MODEL": "",
+  "OMA_LLM_API_KEY": "",
+
+  "OMA_TASKS_TARGET": "github",
+  "OMA_CRM_TARGET": "",
+  "OMA_DOC_TARGET": "",
+
+  "LINEAR_API_KEY": "",
+  "OMA_LINEAR_TEAM": "",
+  "JIRA_BASE_URL": "",
+  "JIRA_EMAIL": "",
+  "JIRA_API_TOKEN": "",
+  "OMA_JIRA_PROJECT": "",
+  "CLICKUP_API_TOKEN": "",
+  "OMA_CLICKUP_LIST_ID": "",
+  "HUBSPOT_TOKEN": "",
+  "NOTION_TOKEN": "",
+  "OMA_NOTION_PARENT_PAGE_ID": "",
+  "OMA_DOC_DIR": "",
+  "OMA_DOC_TEMPLATE": "",
+  "OMA_WEBHOOK_URL": "",
+  "OMA_WEBHOOK_SECRET": ""
+}
