@@ -4,8 +4,9 @@
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { config } from './config.js';
-import { distributePlan } from './github.js';
+import { liveTranscriptText, sayInMeeting } from './live.js';
 import { doctor, runMcpServer } from './mcp/server.js';
+import { deliverOutputs, recordOutput, resultsText } from './outputs/index.js';
 import {
   agentPrompt, cancelMeeting, endMeeting, importMeetily, importRecording, joinMeeting, runAgentHook, runWorker,
 } from './pipeline.js';
@@ -15,7 +16,7 @@ import { listMeetilyMeetings } from './sources/meetily.js';
 import { screenStatus, startScreenCapture, stopScreenCapture } from './sources/screen.js';
 import { getPlan, latestCall, listCalls, mustGetCall, updateCall } from './store.js';
 import { mustGetPlan, nextTask, taskBrief, updateTask } from './tasks.js';
-import type { Autonomy, TaskState } from './types.js';
+import type { ActMode, Autonomy, OutputKind, TaskState } from './types.js';
 import { callLine, callSummary, planDetail, planText } from './views.js';
 
 const HELP = `oma — open-meeting-agent
@@ -25,10 +26,16 @@ const HELP = `oma — open-meeting-agent
   oma bot build                   build the bot's container image (once)
 
   oma join <url> [--title T] [--name N] [--autonomy suggest|issues|prs] [--repo owner/repo]…
+           [--act after|during|both] [--tasks T] [--crm T] [--doc T]
+                                  --act: when the agent acts (during = answers in the meeting)
+                                  --tasks github|linear|jira|clickup|webhook|agent|none
+                                  --crm hubspot|webhook|agent|none   --doc file|notion|webhook|agent|none
+  oma live [call]                 what is being said in the meeting (captions and chat)
+  oma say <call> <text>           post in the meeting chat as the agent
   oma end [call]                  the agent leaves; the call is processed
   oma cancel [call]               the agent leaves; nothing is kept
-  oma meetily [meeting-id]        list meetily meetings, or import one
-  oma import <file> [--title T]   import an audio/video recording
+  oma meetily [meeting-id]        list meetily meetings, or import one (--tasks/--crm/--doc too)
+  oma import <file> [--title T]   import an audio/video recording (--tasks/--crm/--doc too)
   oma screen start|stop|status    record this screen (for meetily meetings)
 
   oma list                        calls on this machine
@@ -38,7 +45,10 @@ const HELP = `oma — open-meeting-agent
   oma plan build [call]           build the plan with the configured model
   oma plan save <call> <file>     save a plan written elsewhere (JSON)
   oma note <call> <text> [--replan]
-  oma issues [call] [--repo owner/repo]
+  oma deliver [call] [--only tasks|crm|doc] [--repo owner/repo]
+                                  deliver the plan: tasks platform, CRM, document
+  oma delivered <call> <crm|doc> [url]   record where you put an output yourself
+  oma issues [call]               the same as deliver --only tasks
   oma next [call]                 take the next task
   oma task <call> <key> <state> [--pr URL] [--note TEXT]
   oma prompt [call]               the prompt that hands the call to a coding agent
@@ -61,6 +71,11 @@ async function main(argv: string[]): Promise<void> {
       title: { type: 'string' },
       name: { type: 'string' },
       autonomy: { type: 'string' },
+      act: { type: 'string' },
+      tasks: { type: 'string' },
+      crm: { type: 'string' },
+      doc: { type: 'string' },
+      only: { type: 'string' },
       repo: { type: 'string', multiple: true },
       pr: { type: 'string' },
       note: { type: 'string' },
@@ -72,6 +87,8 @@ async function main(argv: string[]): Promise<void> {
   const opts = {
     title: o.title, agentName: o.name, repos: o.repo, workdir: process.cwd(),
     autonomy: (['suggest', 'issues', 'prs'].includes(o.autonomy ?? '') ? o.autonomy : undefined) as Autonomy | undefined,
+    act: (['after', 'during', 'both'].includes(o.act ?? '') ? o.act : undefined) as ActMode | undefined,
+    outputs: { tasks: o.tasks, crm: o.crm, doc: o.doc },
   };
   const out = (s: string): void => { process.stdout.write(`${s}\n`); };
 
@@ -87,6 +104,14 @@ async function main(argv: string[]): Promise<void> {
       if (!rest[0]) throw new Error('usage: oma join <meeting url>');
       const c = await joinMeeting(rest[0], opts);
       return out(`${callSummary(c)}\n\nAdmit "${c.agent_name}" if the meeting has a lobby. \`oma end ${c.id}\` when you are done.`);
+    }
+    case 'live': return out(liveTranscriptText(resolve(rest[0]).id));
+    case 'say': {
+      const t = rest.slice(1).join(' ');
+      if (!rest[0] || !t) throw new Error('usage: oma say <call> <text>');
+      const r = await sayInMeeting(resolve(rest[0]).id, t, 10_000);
+      if (r.ok === false) throw new Error(`could not post: ${r.error}`);
+      return out(r.ok ? 'posted' : 'queued');
     }
     case 'end': return out(callSummary(await endMeeting(resolve(rest[0]).id)));
     case 'cancel': return out(callSummary(await cancelMeeting(resolve(rest[0]).id)));
@@ -131,9 +156,16 @@ async function main(argv: string[]): Promise<void> {
       updateCall(c.id, { notes: [...c.notes, { at: new Date().toISOString(), text: t }] });
       return out(o.replan ? planText(await buildPlan(c.id)) : 'note saved');
     }
+    case 'deliver':
     case 'issues': {
-      const res = await distributePlan(resolve(rest[0]).id, { repo: o.repo?.[0] });
-      return out(res.map((r) => `${r.key}: ${r.issue ?? `skipped (${r.skipped})`}`).join('\n'));
+      const only = (cmd === 'issues' ? 'tasks' : ['tasks', 'crm', 'doc'].includes(o.only ?? '') ? o.only : undefined) as OutputKind | undefined;
+      return out(resultsText(await deliverOutputs(resolve(rest[0]).id, { only, repo: o.repo?.[0] })));
+    }
+    case 'delivered': {
+      const [id, kind, url] = rest;
+      if (!id || !['crm', 'doc', 'tasks'].includes(kind ?? '')) throw new Error('usage: oma delivered <call> <crm|doc> [url]');
+      recordOutput(resolve(id).id, kind as OutputKind, url ?? null);
+      return out(`${kind} recorded`);
     }
     case 'next': {
       const c = resolve(rest[0]);

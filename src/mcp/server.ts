@@ -6,21 +6,23 @@ import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { config } from '../config.js';
-import { distributePlan } from '../github.js';
+import { config, CRM_TARGETS, DOC_TARGETS, TASKS_TARGETS } from '../config.js';
+import { liveLineText, sayInMeeting, watchMeeting } from '../live.js';
 import { llmConfigured } from '../llm/index.js';
 import { spread } from '../media/ffmpeg.js';
 import {
   agentPrompt, cancelMeeting, endMeeting, importMeetily, importRecording, joinMeeting, runAgentHook, spawnWorker,
 } from '../pipeline.js';
-import { buildPlan, callBlocks, PlanEmptyError, saveHostPlan } from '../plan/build.js';
+import { actOf, deliverOutputs, outputsOf, parseOutputs, recordOutput, resultsText } from '../outputs/index.js';
+import { tasksSetupProblem } from '../outputs/tasks.js';
+import { buildPlan, callBlocks, PlanEmptyError, planWants, saveHostPlan } from '../plan/build.js';
 import { planRules } from '../plan/prompt.js';
 import { botImageReady, buildBotImage, containerEngine } from '../sources/bot.js';
 import { listMeetilyMeetings } from '../sources/meetily.js';
 import { screenStatus, startScreenCapture, stopScreenCapture } from '../sources/screen.js';
 import { getFrames, getPlan, latestCall, listCalls, logCall, mustGetCall, updateCall } from '../store.js';
 import { mustGetPlan, nextTask, taskBrief, updateTask } from '../tasks.js';
-import type { Autonomy, Frame } from '../types.js';
+import type { ActMode, Autonomy, Frame, OutputKind } from '../types.js';
 import { callLine, callSummary, frameThumb, planDetail, planText } from '../views.js';
 
 type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
@@ -41,13 +43,23 @@ async function image(f: Frame): Promise<Content> {
 }
 
 const AUTONOMY = z.enum(['suggest', 'issues', 'prs']);
+const ACT = z.enum(['after', 'during', 'both']);
 const REPOS = z.array(z.string().regex(/^[\w.-]+\/[\w.-]+$/)).optional();
+const OUTPUT_KIND = z.enum(['tasks', 'crm', 'doc']);
+const targets = (xs: readonly string[]) => z.enum([...xs, 'none'] as unknown as [string, ...string[]]);
+const OUTPUTS = z.object({
+  tasks: targets(TASKS_TARGETS).optional().describe('Where the tasks go: github (issues), linear, jira, clickup, webhook, agent (you, with your own tools), none'),
+  crm: targets(CRM_TARGETS).optional().describe('The CRM update (company, contacts, deal, note): hubspot, webhook, agent, none'),
+  doc: targets(DOC_TARGETS).optional().describe('The meeting document: file (markdown), notion, webhook, agent, none'),
+}).optional().describe('What is delivered after the call and where (default from OMA_TASKS_TARGET / OMA_CRM_TARGET / OMA_DOC_TARGET)');
 
-const INSTRUCTIONS = `open-meeting-agent sends an agent into a Google Meet / Teams call (or imports a meeting recorded with meetily or a file), watches the shared screen, and turns what was asked into a plan of tasks that you then carry out.
+const INSTRUCTIONS = `open-meeting-agent sends an agent into a Google Meet / Teams call (or imports a meeting recorded with meetily or a file), watches the shared screen, and turns what was asked into a plan — tasks, and when asked a CRM update and a meeting document — that is delivered where the team works and that you then carry out.
 
-Flow: join_meeting (the bot joins; someone admits it) → the person explains and shares the screen → end_meeting (or the meeting ends) → call_status until "needs_plan" → get_call_context (transcript + screens) → save_plan (or build_plan when a planning model is configured) → distribute_plan (GitHub issues, optional) → next_task / update_task until nothing is left.
+Flow: join_meeting (the bot joins; someone admits it) → the person explains and shares the screen → end_meeting (or the meeting ends) → call_status until "needs_plan" → get_call_context (transcript + screens) → save_plan (or build_plan when a planning model is configured) → distribute_plan (the outputs: tasks to GitHub/Linear/Jira/ClickUp, CRM, document) → next_task / update_task until nothing is left.
 
-Autonomy of a call: suggest = stop after the plan for the person to review; issues = also open the issues; prs = also do the tasks and open the pull requests without asking. call_id is optional: tools default to the latest call.`;
+When the agent acts (act): after = quiet in the meeting, works after it (default); during = answers in the meeting when someone addresses it (by name, in speech or in the chat) and only keeps the plan afterwards; both = in the meeting and after. In the meeting, with no planning model configured, you are its brain: loop watch_meeting and answer the mentions with send_meeting_message.
+
+Autonomy of a call: suggest = stop after the plan for the person to review; issues = also deliver the outputs; prs = also do the code tasks and open the pull requests without asking. call_id is optional: tools default to the latest call.`;
 
 export function createServer(): McpServer {
   const server = new McpServer({ name: 'open-meeting-agent', version: '0.1.0' }, { instructions: INSTRUCTIONS });
@@ -73,14 +85,21 @@ export function createServer(): McpServer {
       title: z.string().max(200).optional(),
       agent_name: z.string().max(80).optional().describe('Name shown in the meeting'),
       autonomy: AUTONOMY.optional().describe('How far to go after the meeting without asking (default from OMA_AUTONOMY, else suggest)'),
+      act: ACT.optional().describe('When the agent acts: after the call (default, OMA_ACT), during it (answers in the meeting when addressed), or both'),
+      outputs: OUTPUTS,
       repos: REPOS.describe('GitHub repositories the tasks may target (owner/repo)'),
       workdir: z.string().optional().describe('Folder the coding agent works in afterwards (default: the server\'s cwd)'),
     },
   }, guard(async (a) => {
     const call = await joinMeeting(a.url, {
-      title: a.title, agentName: a.agent_name, autonomy: a.autonomy as Autonomy | undefined, repos: a.repos, workdir: a.workdir ?? process.cwd(),
+      title: a.title, agentName: a.agent_name, autonomy: a.autonomy as Autonomy | undefined, act: a.act as ActMode | undefined,
+      outputs: a.outputs, repos: a.repos, workdir: a.workdir ?? process.cwd(),
     });
-    return text(`${callSummary(call)}\n\nThe agent is on its way. If the meeting has a lobby, admit "${call.agent_name}". When the person is done, call end_meeting (call_id ${call.id}).`);
+    const live = actOf(call) === 'after' ? ''
+      : llmConfigured()
+        ? `\nIn the meeting the agent answers by itself (${config.llm}:${config.llmModel}) when someone says "${call.agent_name}, …" or mentions it in the chat.`
+        : `\nIn the meeting you are the agent's brain: loop watch_meeting (call_id ${call.id}) and answer each mention with send_meeting_message; when nobody watches, it answers "noted" and keeps the request for after the call.`;
+    return text(`${callSummary(call)}\n\nThe agent is on its way. If the meeting has a lobby, admit "${call.agent_name}". When the person is done, call end_meeting (call_id ${call.id}).${live}`);
   }));
 
   tool('end_meeting', {
@@ -103,6 +122,7 @@ export function createServer(): McpServer {
       meeting_id: z.string().optional(),
       title: z.string().max(200).optional(),
       autonomy: AUTONOMY.optional(),
+      outputs: OUTPUTS,
       repos: REPOS,
       workdir: z.string().optional(),
     },
@@ -112,7 +132,7 @@ export function createServer(): McpServer {
       if (!list.length) return text(`No meetings in meetily (${config.meetilyDb}).`);
       return text(`meetily meetings (newest first):\n${list.map((m) => `- ${m.id} · ${m.title} · ${m.created_at} · ${m.segments} segment(s)`).join('\n')}\n\nImport one with import_meetily { meeting_id }.`);
     }
-    const call = await importMeetily(a.meeting_id, { title: a.title, autonomy: a.autonomy as Autonomy | undefined, repos: a.repos, workdir: a.workdir ?? process.cwd() });
+    const call = await importMeetily(a.meeting_id, { title: a.title, autonomy: a.autonomy as Autonomy | undefined, outputs: a.outputs, repos: a.repos, workdir: a.workdir ?? process.cwd() });
     return text(callSummary(call));
   }));
 
@@ -123,11 +143,12 @@ export function createServer(): McpServer {
       path: z.string(),
       title: z.string().max(200).optional(),
       autonomy: AUTONOMY.optional(),
+      outputs: OUTPUTS,
       repos: REPOS,
       workdir: z.string().optional(),
     },
   }, guard(async (a) => text(callSummary(await importRecording(a.path, {
-    title: a.title, autonomy: a.autonomy as Autonomy | undefined, repos: a.repos, workdir: a.workdir ?? process.cwd(),
+    title: a.title, autonomy: a.autonomy as Autonomy | undefined, outputs: a.outputs, repos: a.repos, workdir: a.workdir ?? process.cwd(),
   })))));
 
   tool('screen_capture', {
@@ -139,6 +160,47 @@ export function createServer(): McpServer {
     if (a.action === 'stop') { const r = await stopScreenCapture(); return text(r ? `Screen recording saved: ${r.file}` : 'No screen recording was running.'); }
     const r = screenStatus();
     return text(r ? `Recording the screen since ${r.started_at}: ${r.file}` : 'Not recording the screen.');
+  }));
+
+  // ── In the meeting ──────────────────────────────────────────────────────
+  tool('watch_meeting', {
+    title: 'Follow the meeting live',
+    description: 'What is being said in the meeting right now (caption turns and chat, with who said it) after the line `since`. Waits up to wait_seconds for something new, so call it in a loop while the call is in_call: answer each line flagged as a mention of the agent (send_meeting_message, and your own tools when they ask for something), then call again with since = the returned "next". Needs act during/both to be answered; works for reading on any bot call.',
+    inputSchema: {
+      call_id: z.string().optional(),
+      since: z.number().int().min(0).optional().describe('The "next" of the previous call (0 = from the start)'),
+      wait_seconds: z.number().int().min(0).max(50).optional().describe('How long to wait for something new (default 25)'),
+    },
+  }, guard(async (a) => {
+    const c = resolveCall(a.call_id);
+    if (c.source !== 'bot') return fail('Only a call the bot joined can be followed live.');
+    const r = await watchMeeting(c.id, a.since ?? 0, a.wait_seconds ?? 25);
+    const next = r.view.lines.at(-1)?.seq ?? (a.since ?? 0);
+    const mention = new Set(r.mentions.map((m) => m.seq));
+    const out = [
+      `Call ${r.call.id}: ${r.call.status} · act: ${actOf(r.call)} · captions ${r.view.captions === null ? 'not reported yet' : r.view.captions ? 'on' : 'unavailable'} · chat ${r.view.chat ? 'open' : r.view.chat === false ? 'unavailable' : 'not reported yet'}`,
+      ...r.lines.map((l) => `${mention.has(l.seq) ? '→ MENTION ' : ''}#${l.seq} ${liveLineText(r.call, l)}`),
+      ...r.view.speaking.map((s) => `(speaking) ${liveLineText(r.call, { kind: 'speech', ...s })} …`),
+      r.view.failed.length ? `Messages that could not be posted: ${r.view.failed.map((f) => f.error).join('; ')}` : '',
+      `next: ${next}`,
+      ['joining', 'in_call'].includes(r.call.status)
+        ? llmConfigured() && actOf(r.call) !== 'after'
+          ? 'The planning model answers the mentions by itself here: don\'t answer them too. watch_meeting again with since = next to keep following.'
+          : (r.mentions.length ? 'Answer the mention(s) with send_meeting_message, then watch_meeting again with since = next.' : 'Nothing for you yet: watch_meeting again with since = next.')
+        : 'The meeting is over for the agent: stop watching; continue with call_status / the plan.',
+    ].filter(Boolean);
+    return text(out.join('\n'));
+  }));
+
+  tool('send_meeting_message', {
+    title: 'Say something in the meeting',
+    description: 'Posts a message in the meeting chat as the agent (short: one to three sentences). Use it to answer whoever addressed the agent, confirm what you will do, or share a link you just created.',
+    inputSchema: { call_id: z.string().optional(), text: z.string().min(1).max(2000) },
+  }, guard(async (a) => {
+    const c = resolveCall(a.call_id);
+    const r = await sayInMeeting(c.id, a.text, 10_000);
+    return r.ok === false ? fail(`Could not post in the meeting chat: ${r.error}`)
+      : text(r.ok ? 'Posted in the meeting chat.' : 'Queued: the agent posts it in a moment.');
   }));
 
   // ── Reading a call ──────────────────────────────────────────────────────
@@ -180,7 +242,7 @@ export function createServer(): McpServer {
         content.push(await image(f));
       } else buf += `(${b.label}: not attached — get_frames { labels: ["${b.label}"] })\n`;
     }
-    buf += `\n---\nNow write the plan for this call. ${planRules(call.language)}\n\nSave it with save_plan { call_id: "${call.id}", plan: { … } }.`;
+    buf += `\n---\nNow write the plan for this call. ${planRules(call.language, planWants(call))}\n\nSave it with save_plan { call_id: "${call.id}", plan: { … } }.`;
     content.push({ type: 'text', text: buf });
     return { content };
   }));
@@ -207,14 +269,14 @@ export function createServer(): McpServer {
     description: 'Saves the plan you wrote from get_call_context (validated the same way as a model\'s). Replaces the previous plan.',
     inputSchema: {
       call_id: z.string().optional(),
-      plan: z.union([z.string(), z.record(z.unknown())]).describe('{title, summary, questions[], tasks[{title, description, acceptance[], frames[], repo, deliverable, priority, depends_on[]}]}'),
+      plan: z.union([z.string(), z.record(z.unknown())]).describe('{title, summary, questions[], tasks[{title, description, acceptance[], frames[], repo, deliverable, priority, depends_on[]}], crm?, doc?} — crm/doc when get_call_context asks for them'),
     },
   }, guard(async (a) => {
     const call = resolveCall(a.call_id);
     const plan = saveHostPlan(call.id, a.plan);
     const next = call.autonomy === 'suggest'
       ? 'Show the plan to the person: they review it before anything else.'
-      : call.autonomy === 'issues' ? 'Next: distribute_plan.' : 'Next: distribute_plan (if the call has a repository), then next_task.';
+      : call.autonomy === 'issues' ? 'Next: distribute_plan.' : 'Next: distribute_plan, then next_task.';
     return text(`${planText(plan)}\n\n${next}`);
   }));
 
@@ -253,27 +315,43 @@ export function createServer(): McpServer {
 
   tool('set_call', {
     title: 'Change a call',
-    description: 'Link repositories, change the autonomy, the work folder or the title (e.g. a call made before the repository was known).',
+    description: 'Link repositories, change the autonomy, when the agent acts (act — also while it is in the meeting), where the outputs go, the work folder or the title.',
     inputSchema: {
-      call_id: z.string().optional(), title: z.string().max(200).optional(), autonomy: AUTONOMY.optional(), repos: REPOS, workdir: z.string().optional(),
+      call_id: z.string().optional(), title: z.string().max(200).optional(), autonomy: AUTONOMY.optional(), act: ACT.optional(), outputs: OUTPUTS,
+      repos: REPOS, workdir: z.string().optional(),
     },
   }, guard(async (a) => {
     const call = resolveCall(a.call_id);
     const patch: Record<string, unknown> = {};
     if (a.title) patch.title = a.title;
     if (a.autonomy) patch.autonomy = a.autonomy;
+    if (a.act) patch.act = a.act;
+    if (a.outputs) patch.outputs = parseOutputs(a.outputs, outputsOf(call));
     if (a.repos) patch.repos = a.repos;
     if (a.workdir) patch.workdir = a.workdir;
     return text(callSummary(updateCall(call.id, patch)));
   }));
 
   tool('distribute_plan', {
-    title: 'Open the GitHub issues',
-    description: 'One GitHub issue per task that has a repository (acceptance criteria as a checklist, dependencies linked). Uses GITHUB_TOKEN or the logged-in gh CLI.',
-    inputSchema: { call_id: z.string().optional(), repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional().describe('For tasks with no repository') },
+    title: 'Deliver the plan',
+    description: 'Delivers the plan to the call\'s outputs: the tasks to the task platform (GitHub issues, Linear, Jira, ClickUp — one item each, criteria as a checklist, dependencies linked), the CRM update (HubSpot), the meeting document (markdown file, Notion), or a webhook. Outputs set to "agent" come back to you with what to create: do it with your own tools, then record the links (update_task issue_url for tasks, record_output for the CRM / document). What was already delivered is not sent again.',
+    inputSchema: {
+      call_id: z.string().optional(),
+      only: OUTPUT_KIND.optional().describe('Deliver only this output'),
+      repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional().describe('GitHub: the repository for tasks that have none'),
+    },
   }, guard(async (a) => {
-    const res = await distributePlan(resolveCall(a.call_id).id, { repo: a.repo });
-    return text(res.map((r) => `- ${r.key}: ${r.issue ?? `skipped (${r.skipped})`}`).join('\n'));
+    const res = await deliverOutputs(resolveCall(a.call_id).id, { only: a.only as OutputKind | undefined, repo: a.repo });
+    return text(resultsText(res));
+  }));
+
+  tool('record_output', {
+    title: 'Record where an output went',
+    description: 'After putting an output in place with your own tools (target "agent"): records its link so it shows in the call and is not delivered again. For tasks, record each one with update_task issue_url instead.',
+    inputSchema: { call_id: z.string().optional(), kind: z.enum(['crm', 'doc', 'tasks']), url: z.string().optional(), note: z.string().max(1000).optional() },
+  }, guard(async (a) => {
+    const d = recordOutput(resolveCall(a.call_id).id, a.kind, a.url ?? null, a.note);
+    return text(`${a.kind} recorded${d.url ? `: ${d.url}` : ''}.`);
   }));
 
   // ── After the meeting: the work ─────────────────────────────────────────
@@ -365,7 +443,13 @@ export async function doctor(): Promise<string> {
   lines.push(`${ok(config.asr !== 'none')} transcription: ${config.asr === 'whisper-cpp' ? `whisper.cpp (${config.whisperModel})` : config.asr === 'openai' ? `${config.asrBaseUrl} (${config.asrModel})` : 'none — set OMA_WHISPER_MODEL or OMA_ASR_API_KEY (meetily imports don\'t need it)'}`);
   lines.push(`${llmConfigured() ? '✓' : '·'} planning model: ${llmConfigured() ? `${config.llm}:${config.llmModel}` : 'none — the connected agent builds the plan (get_call_context + save_plan)'}`);
   const gh = !!config.githubToken || await run('gh', ['auth', 'status'], 'gh', 10_000).then(() => true).catch(() => false);
-  lines.push(`${gh ? '✓' : '·'} GitHub: ${config.githubToken ? 'GITHUB_TOKEN' : gh ? 'gh CLI' : 'not set (only needed for distribute_plan)'}`);
+  lines.push(`${gh ? '✓' : '·'} GitHub: ${config.githubToken ? 'GITHUB_TOKEN' : gh ? 'gh CLI' : 'not set (only needed for GitHub issues)'}`);
+  lines.push(`  acts: ${config.act}${config.act !== 'after' ? ` (in the meeting: ${llmConfigured() ? 'the planning model answers' : 'the connected agent answers via watch_meeting'})` : ''}`);
+  const out = (kind: string, target: string | null, problem: string) => lines.push(`${target ? (problem ? '✗' : '✓') : '·'} ${kind} → ${target ?? 'none'}${problem ? ` — ${problem}` : ''}`);
+  const t = config.tasksTarget;
+  out('tasks', t, t === 'linear' || t === 'jira' || t === 'clickup' ? tasksSetupProblem(t) : t === 'webhook' && !config.webhookUrl ? 'OMA_WEBHOOK_URL not set' : '');
+  out('crm', config.crmTarget, config.crmTarget === 'hubspot' && !config.hubspotToken ? 'HUBSPOT_TOKEN not set' : config.crmTarget === 'webhook' && !config.webhookUrl ? 'OMA_WEBHOOK_URL not set' : '');
+  out('doc', config.docTarget, config.docTarget === 'notion' && !(config.notionToken && (config.notionParentPage || config.notionDatabase)) ? 'NOTION_TOKEN and OMA_NOTION_PARENT_PAGE_ID (or OMA_NOTION_DATABASE_ID) needed' : config.docTarget === 'webhook' && !config.webhookUrl ? 'OMA_WEBHOOK_URL not set' : '');
   const meetily = await listMeetilyMeetings(1).then(() => true).catch(() => false);
   lines.push(`${meetily ? '✓' : '·'} meetily: ${meetily ? config.meetilyDb : 'not found (optional)'}`);
   lines.push(`${config.agentCommand ? '✓' : '·'} after the meeting: ${config.agentCommand ? `runs \`${config.agentCommand}\`` : 'OMA_AGENT_COMMAND not set (the agent acts when you ask it)'}`);

@@ -5,6 +5,8 @@ import path from 'node:path';
 import { config } from './config.js';
 import { run } from './media/ffmpeg.js';
 import { fmtTime } from './plan/prompt.js';
+import { readLive } from './live.js';
+import { actOf, actsDuring, liveTaskTarget, outputsLine, outputsOf } from './outputs/index.js';
 import { botStatus } from './sources/bot.js';
 import { callPaths, getFrames, getPlan, getTranscript } from './store.js';
 import { progress, readyTasks } from './tasks.js';
@@ -28,17 +30,24 @@ export function callSummary(c: Call): string {
   const lines = [
     `Call ${c.id}: ${c.title}`,
     `Status: ${c.status} — ${STATUS_TEXT[c.status]}${c.error ? `\nError: ${c.error}` : ''}`,
-    `Source: ${c.source}${c.meeting_url ? ` (${c.meeting_url})` : ''} · autonomy: ${c.autonomy} · repos: ${c.repos.join(', ') || 'none'}${c.workdir ? ` · workdir: ${c.workdir}` : ''}`,
+    `Source: ${c.source}${c.meeting_url ? ` (${c.meeting_url})` : ''} · autonomy: ${c.autonomy}${c.source === 'bot' ? ` · acts: ${actOf(c)}` : ''} · repos: ${c.repos.join(', ') || 'none'}${c.workdir ? ` · workdir: ${c.workdir}` : ''}`,
+    `Outputs: ${outputsLine(outputsOf(c))}`,
   ];
   if (c.source === 'bot' && (c.status === 'joining' || c.status === 'in_call')) {
     const st = botStatus(c.id);
     if (st) lines.push(`Bot: ${st.state}${st.participants != null ? ` · ${st.participants} participant(s)` : ''}${st.error ? ` · ${st.error}` : ''}`);
+    if (actsDuring(c)) {
+      const v = readLive(c.id, c.agent_name);
+      const lt = liveTaskTarget(c);
+      lines.push(`Live: ${v.lines.length} line(s) · captions ${v.captions === null ? '…' : v.captions ? 'on' : 'unavailable'} · chat ${v.chat === null ? '…' : v.chat ? 'open' : 'unavailable'} · tasks asked for in the meeting: ${lt ? `created right away in ${lt}` : 'after the call'}`);
+    }
   }
+  if (c.live_tasks?.length) lines.push(`Created in the meeting:\n${c.live_tasks.map((t) => `- ${t.title}${t.url ? ` ${t.url}` : ''}`).join('\n')}`);
   const segs = getTranscript(c.id);
   if (segs) lines.push(`Transcript: ${segs.length} segment(s)${segs.length ? `, ${fmtTime(segs.at(-1)!.end)}` : ''} · frames: ${getFrames(c.id).length}`);
   const plan = getPlan(c.id);
   if (plan) lines.push('', planText(plan));
-  if (c.notes.length) lines.push('', `Notes after the call:\n${c.notes.map((n) => `- ${n.text.split('\n')[0]}`).join('\n')}`);
+  if (c.notes.length) lines.push('', `Notes:\n${c.notes.map((n) => `- ${n.text.split('\n')[0]}`).join('\n')}`);
   return lines.join('\n');
 }
 
@@ -57,10 +66,18 @@ export function planText(plan: Plan): string {
     const links = [t.issue_url, t.pr_url].filter(Boolean).join(' ');
     return `- ${t.key} ${t.title} [${flags}]${links ? ` ${links}` : ''}`;
   });
+  const d = plan.deliveries ?? {};
+  const where = (k: 'crm' | 'doc') => (d[k] ? ` → delivered (${d[k]!.target}${d[k]!.url ? `: ${d[k]!.url}` : ''})` : ' (not delivered yet)');
+  const crm = plan.crm
+    ? `CRM update: ${[plan.crm.company?.name, plan.crm.contacts.length ? `${plan.crm.contacts.length} contact(s)` : '', plan.crm.deal?.name ? `deal "${plan.crm.deal.name}"` : ''].filter(Boolean).join(' · ') || 'a note'}${where('crm')}`
+    : '';
+  const doc = plan.doc ? `Document: ${plan.doc.title || plan.title}${where('doc')}` : '';
   return [
     `Plan: ${plan.title} — ${pr.done}/${pr.total} done (by ${plan.built_by})`,
     plan.summary,
     tasks.join('\n'),
+    crm,
+    doc,
     plan.questions.length ? `Open questions:\n${plan.questions.map((q) => `- ${q}`).join('\n')}` : '',
   ].filter(Boolean).join('\n');
 }
