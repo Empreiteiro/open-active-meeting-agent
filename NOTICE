@@ -1,0 +1,11 @@
+open-meeting-agent
+Copyright (c) 2026 open-meeting-agent contributors — MIT License (see LICENSE).
+
+This project builds on, and links as a git submodule (desktop/):
+
+  meetily — https://github.com/Zackriya-Solutions/meetily
+  Copyright (c) 2024 Zackriya Solutions
+  MIT License
+
+The meeting bot in bot/ and the planning approach were ported from Queryable's
+agent calls, contributed by their authors under this project's MIT License.

@@ -1,0 +1,39 @@
+{
+  "name": "open-meeting-agent",
+  "version": "0.1.0",
+  "description": "A local agent that joins your meetings, watches the shared screen and turns the call into a plan your coding agent executes \u2014 as an MCP server and a Claude Code plugin.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "oma": "dist/oma.mjs"
+  },
+  "files": [
+    "dist",
+    "bot",
+    "skills",
+    ".claude-plugin",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/oma.mjs --banner:js=\"#!/usr/bin/env node\nimport { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);\" --legal-comments=none",
+    "test": "npm run build && node --no-warnings --test --import tsx test/*.test.ts",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
