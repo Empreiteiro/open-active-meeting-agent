@@ -29,8 +29,10 @@ affected.
 
 ## Who answers
 
-1. **A planning model is configured** (`OMA_LLM_PROVIDER` + `OMA_LLM_MODEL`):
-   the agent answers by itself, from the last minutes of conversation.
+1. **A planning model is configured**: the agent answers by itself, from the
+   last minutes of conversation. `OMA_LLM_PROVIDER=claude-code` uses Claude
+   Code on this machine (no API key; one click in the web UI); an API works too
+   (`anthropic` / `openai` + `OMA_LLM_MODEL`).
 2. **No model, and the connected agent is following** (`watch_meeting` in a
    loop — the Claude Code skill `/meeting-agent:live-meeting` does it): your
    agent sees each mention and answers with `send_meeting_message`, using its

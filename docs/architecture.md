@@ -1,9 +1,11 @@
 # Architecture
 
-One Node process (`dist/oma.mjs`, bundled from `src/`) plays three roles:
+One Node process (`dist/oma.mjs`, bundled from `src/`) plays four roles:
 
 - **MCP server** (`oma mcp`, `src/mcp/server.ts`) — the tools agents call.
 - **CLI** (`src/cli.ts`) — the same from a terminal.
+- **Web UI** (`oma ui`, `src/ui/`) — a chat with the local agent beside the
+  meetings, serving the page in `ui/` ([ui.md](ui.md)).
 - **Worker** (`oma worker <call>`, `runWorker` in `src/pipeline.ts`) — started
   detached for each call, so a meeting keeps being followed and processed after
   the MCP server or the terminal that started it is gone. One per call (a lock
@@ -23,7 +25,11 @@ src/
   asr/                transcription (whisper.cpp, OpenAI-compatible) + speaker names from the bot's timeline
   media/ffmpeg.ts     probe, 16 kHz audio, changed-screen detection (mpdecimate), frames
   plan/               prompt + rules, normalization, building (model or host) with a retry for empty plans
-  llm/                Anthropic Messages / OpenAI-compatible chat (fetch only)
+  llm/                the model: Anthropic Messages / OpenAI-compatible chat (fetch only),
+                      or a local agent (Claude Code, any command)
+  agents/             local agents: claude.ts (Claude Code's stream-json protocol, permission
+                      requests included), command.ts (prompt on stdin, answer on stdout)
+  ui/                 oma ui: server.ts (HTTP + events, token, localhost only), chats.ts (chats, turns)
   tasks.ts            ready tasks, next_task, update_task, the brief, autonomy rules
   github.ts           issues (GITHUB_TOKEN or gh)
   outputs/            delivering the plan: index (targets, deliverOutputs, live task creation),
@@ -31,6 +37,7 @@ src/
   views.ts            text views for tools and CLI
 bot/                  the meeting bot (its own package + Dockerfile); live.ts + liveText.ts read the
                       captions and chat and post in the chat
+ui/                   the web UI's page: index.html, app.css, app.js (no build step)
 skills/               Claude Code plugin skills
 .claude-plugin/       plugin + marketplace manifests (the repo root is the plugin)
 desktop/              meetily (submodule): the local recorder app

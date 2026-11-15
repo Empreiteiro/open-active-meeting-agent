@@ -9,7 +9,9 @@ updated, the meeting document in Notion — and your coding agent carries out
 the code: pull requests.
 
 It runs **locally** and plugs into **any MCP client** — Claude Code (as a
-plugin), Claude Desktop, Cursor, VS Code, Windsurf, Codex, Gemini CLI.
+plugin), Claude Desktop, Cursor, VS Code, Windsurf, Codex, Gemini CLI — and has
+its own **web UI** (`oma ui`): a ChatGPT-style chat with your local agent
+(Claude Code, no API key) beside your meetings, their live transcript and plans.
 
 ```
  you share the screen and explain          after the call
@@ -44,7 +46,8 @@ plugin), Claude Desktop, Cursor, VS Code, Windsurf, Codex, Gemini CLI.
    with what/where, 2–6 acceptance criteria, the frames that show it, the
    repository, `pr` or `issue`, priority and dependencies. **Your connected
    agent writes it** (`get_call_context` → `save_plan`), or a configured model
-   does (`build_plan`: Anthropic or any OpenAI-compatible server, Ollama included).
+   does (`build_plan`: Claude Code on this machine, Anthropic, or any
+   OpenAI-compatible server, Ollama included).
    When the call asks for them, the plan also carries a **CRM update** and the
    **meeting document**.
 5. **The outputs.** `distribute_plan` delivers it: the tasks to GitHub issues,
@@ -120,13 +123,28 @@ Then, in a project:
 
 To have it answer during the meeting: ask for it when joining ("join and help
 during the call"), then `/meeting-agent:live-meeting` makes Claude Code its
-brain for the call (not needed with a planning model configured).
+brain for the call. Or let it answer by itself with Claude Code in the
+background: `make set KV="OMA_LLM_PROVIDER=claude-code"` (it also builds the
+plans after the call; no API key).
 
 Other clients: [docs/integrations.md](docs/integrations.md).
+
+### The web UI
+
+```bash
+make ui          # or: oma ui — opens http://127.0.0.1:4141
+```
+
+A chat in your browser, in the style of ChatGPT: ask your local agent (Claude
+Code by default) about your meetings, paste a meeting link to send the agent
+in, follow what is said live, read and deliver the plan. Claude Code answers
+with the meeting tools, its permission requests show up in the chat (allow /
+deny), and nothing needs an API key. See [docs/ui.md](docs/ui.md).
 
 ### From a terminal
 
 ```bash
+oma ui                      # the web UI
 oma join https://meet.google.com/abc-defg-hij --repo acme/app --autonomy issues
 oma join <url> --act both --tasks clickup --crm hubspot --doc notion
 oma live                    # what is being said (captions and chat)
@@ -211,6 +229,7 @@ editing the file avoids that. The keys are in [Configuration](#configuration).
 ### In a meeting
 
 ```bash
+make ui                            # the web UI (PORT=4141)
 make join URL=https://meet.google.com/abc-defg-hij
 make join URL=https://meet.google.com/abc-defg-hij ACT=both TASKS=clickup CRM=hubspot DOC=notion AUTONOMY=issues
 make join URL=<teams link> REPO=acme/app AUTONOMY=prs
@@ -301,8 +320,15 @@ Environment variables, or the same keys in `~/.open-meeting-agent/config.json`.
 | `OMA_WHISPER_MODEL`, `OMA_WHISPER_BIN` | —, `whisper-cli` | local transcription |
 | `OMA_ASR_API_KEY`, `OMA_ASR_BASE_URL`, `OMA_ASR_MODEL` | `OPENAI_API_KEY`, OpenAI, `whisper-1` | API transcription (Groq: `https://api.groq.com/openai/v1` + `whisper-large-v3`) |
 | `OMA_ASR` | auto | force `whisper-cpp` · `openai` · `none` |
-| `OMA_LLM_PROVIDER`, `OMA_LLM_MODEL` | — | optional planning model: `anthropic` or `openai` (any OpenAI-compatible server) |
+| `OMA_LLM_PROVIDER`, `OMA_LLM_MODEL` | — | optional model for plans and answers in the meeting: `claude-code` (Claude Code on this machine, no API key; model optional), `anthropic`, `openai` (any OpenAI-compatible server), or `command` |
 | `OMA_LLM_BASE_URL`, `OMA_LLM_API_KEY` | — | e.g. Ollama: `http://localhost:11434/v1` |
+| `OMA_LLM_COMMAND` | — | provider `command`: any agent that reads the prompt on stdin (`codex exec -`, `gemini`) |
+| `OMA_CLAUDE_BIN` | `claude` | Claude Code's command |
+| `OMA_UI_PORT` | `4141` | the web UI's port (`oma ui`) |
+| `OMA_UI_AGENT`, `OMA_UI_AGENT_COMMAND` | `claude` | who answers in the UI's chat: Claude Code, or `command` with a command (stdin → stdout) |
+| `OMA_UI_MODEL` | Claude Code's | the model of the UI's chat (`sonnet`, `haiku`…) |
+| `OMA_UI_ALLOWED_TOOLS` | — | tools the UI's chat may use without asking, besides the meeting tools (`Bash(git status:*),Edit`) |
+| `OMA_UI_WORKDIR` | your home folder | the folder new chats work in |
 | `OMA_AGENT_COMMAND` | — | started when a call is ready: `{prompt}` `{call_id}` `{workdir}` |
 | `GITHUB_TOKEN` | gh CLI | GitHub issues (tasks target `github`) |
 | `OMA_GITHUB_API_URL` | `https://api.github.com` | GitHub Enterprise: `https://<host>/api/v3` |
@@ -323,10 +349,11 @@ Environment variables, or the same keys in `~/.open-meeting-agent/config.json`.
                     audio.m4a, recording.mp4, timeline.json
   live-state.json   live-watch.json   the agent in the meeting
   log.txt  worker.log  agent.log
+~/.open-meeting-agent/ui/chats/<id>.json   the web UI's chats (Claude Code resumes its own session)
 ```
 
 Nothing leaves your machine except what you configure: the transcription API,
-the planning model, the output targets (GitHub, Linear, Jira, ClickUp, HubSpot,
+the planning model (Claude Code talks to its own model), the output targets (GitHub, Linear, Jira, ClickUp, HubSpot,
 Notion, your webhook), and whatever your coding agent sends.
 
 ## Status
@@ -344,7 +371,12 @@ Early (0.1). What has been exercised:
 - the real bot image: it builds, boots (Xvfb, PulseAudio, Chromium), reports
   through its volume, and cancels;
 - the Claude Code plugin: `claude plugin validate` passes, it installs from the
-  marketplace and its MCP server connects.
+  marketplace and its MCP server connects;
+- the web UI with the real Claude Code: a meeting's chat answered through the
+  meeting tools, streamed; a permission asked in the page and denied; the
+  session resumed; Claude Code as the planning model, reading a frame. Its API,
+  events and permission round trip are also tested against a stand-in Claude
+  Code (`test/ui.test.ts`).
 
 Not yet run here: the bot in a live Google Meet / Teams call (its join and
 speaker logic come from Queryable's production bot; the live captions-as-text

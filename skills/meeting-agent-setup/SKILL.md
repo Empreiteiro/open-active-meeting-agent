@@ -16,6 +16,7 @@ description: Check and fix what the meeting agent needs on this machine — cont
    - **GitHub** (only for issues): `gh auth login`, or `GITHUB_TOKEN`.
    - **Where the outputs go** (optional; `docs/outputs.md` in the plugin folder has every setting): tasks `OMA_TASKS_TARGET` (`github`, `linear` + `LINEAR_API_KEY`, `jira` + `JIRA_*`, `clickup` + `CLICKUP_API_TOKEN` / `OMA_CLICKUP_LIST_ID`), CRM `OMA_CRM_TARGET` (`hubspot` + `HUBSPOT_TOKEN`), document `OMA_DOC_TARGET` (`file`, `notion` + `NOTION_TOKEN` / `OMA_NOTION_PARENT_PAGE_ID`); `webhook` + `OMA_WEBHOOK_URL`; `agent` needs nothing (you do it with your tools).
    - **Acting in the meeting** (optional): `OMA_ACT` (`after`, `during`, `both`), `OMA_LIVE_NAMES` (other names that call it).
-   - **Planning model** (optional — without it you build the plan yourself): `OMA_LLM_PROVIDER` (`anthropic` or `openai` for any OpenAI-compatible server such as Ollama) + `OMA_LLM_MODEL` (+ key / `OMA_LLM_BASE_URL`).
+   - **Planning model** (optional — without it you build the plan yourself): `OMA_LLM_PROVIDER=claude-code` uses Claude Code on this machine (no API key; it also answers in the meeting by itself), or `anthropic` / `openai` (any OpenAI-compatible server such as Ollama) + `OMA_LLM_MODEL` (+ key / `OMA_LLM_BASE_URL`).
+   - **Web UI** (optional): `oma ui` (or `make ui`) opens a chat with Claude Code beside the meetings at http://127.0.0.1:4141.
 3. Settings go in `~/.open-meeting-agent/config.json` (same names as the environment variables); the MCP server reads it on every start. After changing it, the user restarts the MCP server (`/mcp` in Claude Code).
 4. `setup_status` again to confirm.
