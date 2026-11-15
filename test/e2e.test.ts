@@ -1,7 +1,9 @@
 // End to end through the bundled MCP server (dist/oma.mjs mcp), the way an
-// agent uses it: fake container engine (bot), fake ASR, fake model, fake GitHub.
+// agent uses it: fake container engine (bot), fake ASR, fake model, fake
+// GitHub / ClickUp / HubSpot / Notion / webhook.
 
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -81,7 +83,7 @@ test('MCP server lists the tools and the prompt', async () => {
   const s = await connect();
   try {
     const tools = (await s.client.listTools()).tools.map((t) => t.name);
-    for (const t of ['join_meeting', 'end_meeting', 'cancel_meeting', 'import_meetily', 'import_recording', 'get_call_context', 'save_plan', 'build_plan', 'distribute_plan', 'next_task', 'update_task', 'setup_status']) {
+    for (const t of ['join_meeting', 'end_meeting', 'cancel_meeting', 'import_meetily', 'import_recording', 'get_call_context', 'save_plan', 'build_plan', 'distribute_plan', 'record_output', 'watch_meeting', 'send_meeting_message', 'next_task', 'update_task', 'setup_status']) {
       assert.ok(tools.includes(t), `missing tool ${t}`);
     }
     const prompts = (await s.client.listPrompts()).prompts.map((p) => p.name);
@@ -105,6 +107,7 @@ test('the bot joins, the person ends the call, the agent plans and works the tas
     assert.ok(docker.args.includes('JOIN_URL=https://meet.google.com/abc-defg-hij'));
     assert.ok(docker.args.includes('PROVIDER=google_meet'));
     assert.ok(docker.args.includes('RECORD_VIDEO=1'));
+    assert.ok(!docker.args.includes('LIVE_CHAT=1')); // act "after": the chat stays closed (it would cover the recorded screen)
 
     await waitFor(() => s.call('call_status', { call_id: id }), (r) => /Status: in_call/.test(r.text));
     const st = await s.call('call_status', { call_id: id });
@@ -230,5 +233,183 @@ test('meetily: its transcript and notes, and the screen recorded here at the sam
     assert.ok(ctx.images >= 1);
   } finally {
     await s.close();
+  }
+});
+
+/** An Anthropic Messages answer carrying `out` as JSON text. */
+const anthropicAnswer = (out: unknown, n: number) => ({ id: `m${n}`, type: 'message', role: 'assistant', model: 'fake-model', content: [{ type: 'text', text: JSON.stringify(out) }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 10 } });
+const commandsOf = (id: string): string[] => {
+  const f = path.join(home, 'calls', id, 'bot', 'commands.jsonl');
+  return existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => (JSON.parse(l) as { text: string }).text) : [];
+};
+
+test('in the meeting with the connected agent: it follows, sees the mentions and answers; outputs to a webhook and to the agent', async () => {
+  const hook = await fakeServer(() => ({ json: { url: 'https://docs.example/minutes-1' } }));
+  const script = [
+    { after_ms: 1500, type: 'caption', seg: 's1', speaker: 'Ana', text: 'Let us look at the', final: false },
+    { after_ms: 1700, type: 'caption', seg: 's1', speaker: 'Ana', text: 'Let us look at the board.', final: true },
+    { after_ms: 2000, type: 'caption', seg: 's2', speaker: 'Bruno', text: 'Meeting Agent, what did we decide about the due dates?', final: true },
+    { after_ms: 2200, type: 'chat', speaker: 'Ana', text: '@Meeting Agent also check the mobile view' },
+  ];
+  const s = await connect({ FAKE_BOT_LIVE: JSON.stringify(script), OMA_WEBHOOK_URL: hook.url, OMA_WEBHOOK_SECRET: 'shh' });
+  try {
+    const joined = await s.call('join_meeting', { url: 'https://meet.google.com/abc-defg-hij', title: 'Live review', act: 'during' });
+    assert.equal(joined.isError, false, joined.text);
+    assert.match(joined.text, /you are the agent's brain: loop watch_meeting/);
+    const id = idOf(joined.text);
+    const docker = JSON.parse(readFileSync(path.join(home, 'fake-docker.json'), 'utf8'))[`oma-bot-${id}`] as { args: string[] };
+    assert.ok(docker.args.includes('LIVE_CHAT=1')); // the chat panel opens as it gets in
+
+    // The connected agent's loop: watch_meeting until both mentions came in.
+    let since = 0;
+    let seen = '';
+    const until = Date.now() + 30_000;
+    while (!(/MENTION .*Bruno: Meeting Agent, what did we decide/.test(seen) && /MENTION .*Ana \(chat\): @Meeting Agent also check/.test(seen))) {
+      assert.ok(Date.now() < until, `no mentions; seen:\n${seen}`);
+      const r = await s.call('watch_meeting', { call_id: id, since, wait_seconds: 3 });
+      assert.equal(r.isError, false, r.text);
+      seen += `${r.text}\n`;
+      since = Number(r.text.match(/next: (\d+)/)![1]);
+    }
+    assert.match(seen, /captions on · chat open/);
+    assert.match(seen, /Meeting Agent: Hi! I'm Meeting Agent, an AI assistant/); // the greeting, posted by the worker
+    assert.match(seen, /#\d+ \[00:0\d\] Ana: Let us look at the board\.\n/);  // only the settled turn
+    assert.match(seen, /Answer the mention\(s\) with send_meeting_message/);
+
+    const said = await s.call('send_meeting_message', { call_id: id, text: 'We kept the due date under the title; I will check mobile after the call.' });
+    assert.equal(said.text, 'Posted in the meeting chat.');
+    // The agent was watching: the worker did not answer "noted" on its own.
+    const cmds = commandsOf(id);
+    assert.equal(cmds.length, 2, cmds.join(' | '));
+    assert.match(cmds[1]!, /^We kept the due date/);
+    assert.match((await s.call('call_status', { call_id: id })).text, /acts: during[\s\S]*Live: \d+ line\(s\) · captions on · chat open · tasks asked for in the meeting: after the call/);
+
+    // After the call (act "during"): processed, nothing delivered by itself.
+    await s.call('end_meeting', { call_id: id });
+    await waitFor(() => s.call('call_status', { call_id: id }), (r) => /Status: needs_plan/.test(r.text));
+
+    // The plan with a CRM update and a document; delivered by hand.
+    await s.call('set_call', { call_id: id, outputs: { tasks: 'none', crm: 'agent', doc: 'webhook' } });
+    const ctx = await s.call('get_call_context', { call_id: id, max_images: 0 });
+    assert.match(ctx.text, /"crm": what the call means for the CRM/);
+    const saved = await s.call('save_plan', { call_id: id, plan: {
+      title: 'Due dates', summary: 'S', questions: [], tasks: [{ title: 'Check the mobile view', description: 'd' }],
+      crm: { company: { name: 'Acme' }, contacts: [{ name: 'Ana' }], summary: 'Reviewed the board.' },
+      doc: { title: 'Minutes', markdown: '# Minutes\n- due dates' },
+    } });
+    assert.match(saved.text, /CRM update: Acme · 1 contact\(s\) \(not delivered yet\)\nDocument: Minutes \(not delivered yet\)/);
+    const dist = await s.call('distribute_plan', { call_id: id });
+    assert.match(dist.text, /## crm → agent\nPut this in the CRM with your own tools[\s\S]*record_output[\s\S]*"name": "Acme"/);
+    assert.match(dist.text, /## doc → webhook\nMinutes → https:\/\/docs\.example\/minutes-1/);
+    assert.equal(hook.requests.length, 1);
+    const sent = hook.requests[0]!;
+    assert.equal((JSON.parse(sent.body) as { event: string; doc: { markdown: string } }).event, 'doc');
+    assert.equal(sent.headers['x-oma-signature'], `sha256=${createHmac('sha256', 'shh').update(sent.body).digest('hex')}`);
+    await s.call('record_output', { call_id: id, kind: 'crm', url: 'https://crm.example/deals/9' });
+    assert.match((await s.call('call_status', { call_id: id })).text, /→ delivered \(agent: https:\/\/crm\.example\/deals\/9\)\nDocument: Minutes → delivered \(webhook: https:\/\/docs\.example\/minutes-1\)/);
+    assert.match((await s.call('distribute_plan', { call_id: id, only: 'doc' })).text, /Already delivered/);
+    assert.equal(hook.requests.length, 1);
+  } finally {
+    await s.close();
+    await hook.close();
+  }
+});
+
+test('in the meeting with a model: it answers by itself and creates the task asked for; after the call the plan goes to ClickUp, HubSpot and Notion', async () => {
+  const brain = await fakeServer(({ body, n }) => {
+    const b = JSON.parse(body) as { system: string };
+    const out = /live meeting/.test(b.system)
+      ? { reply: 'Sure, creating it now.', note: 'Bruno wants the login page fixed this week.', task: { title: 'Fix the login page', description: 'Asked by Bruno.', priority: 'high' } }
+      : {
+        title: 'Login and onboarding', summary: 'SSO for Acme.', questions: [],
+        tasks: [{ title: 'Add SSO to the login page', description: 'd', acceptance: ['works with Google'], frames: ['F1'], deliverable: 'issue', priority: 'medium', depends_on: [] }],
+        crm: { company: { name: 'Acme', domain: 'acme.com' }, contacts: [{ name: 'Ana Souza', email: 'ana@acme.com', role: 'CTO' }], deal: { name: 'Acme rollout', amount: 12000, currency: 'usd', close_date: '2026-12-31' }, summary: 'Acme wants SSO.', next_steps: ['Send the proposal'] },
+        doc: { title: 'Minutes', markdown: '# Minutes\n\n## Decisions\n- **SSO** first\n- [ ] Send the proposal' },
+      };
+    return { json: anthropicAnswer(out, n) };
+  });
+  const clickup = await fakeServer(({ n }) => ({ json: { id: `cu${n}`, url: `https://app.clickup.com/t/cu${n}` } }));
+  const hubspot = await fakeServer(({ path: p, n }) => (p.endsWith('/search') ? { json: { results: [] } }
+    : p.startsWith('/account-info') ? { json: { portalId: 42 } } : { status: 201, json: { id: String(100 + n) } }));
+  const notion = await fakeServer(() => ({ json: { id: 'pg-1', url: 'https://www.notion.so/pg1' } }));
+  const script = [{ after_ms: 1200, type: 'caption', seg: 's1', speaker: 'Bruno', text: 'Meeting Agent, please create a task to fix the login page.', final: true }];
+  const s = await connect({
+    FAKE_BOT_LIVE: JSON.stringify(script),
+    OMA_LLM_PROVIDER: 'anthropic', OMA_LLM_MODEL: 'fake-model', OMA_LLM_BASE_URL: brain.url, OMA_LLM_API_KEY: 'k',
+    CLICKUP_API_TOKEN: 'cu-token', OMA_CLICKUP_LIST_ID: 'L1', OMA_CLICKUP_API_URL: clickup.url,
+    HUBSPOT_TOKEN: 'hs-token', OMA_HUBSPOT_API_URL: hubspot.url,
+    NOTION_TOKEN: 'nt-token', OMA_NOTION_PARENT_PAGE_ID: 'parent-1', OMA_NOTION_API_URL: notion.url,
+  });
+  try {
+    const joined = await s.call('join_meeting', {
+      url: 'https://meet.google.com/abc-defg-hij', title: 'Acme onboarding', act: 'both', autonomy: 'issues',
+      outputs: { tasks: 'clickup', crm: 'hubspot', doc: 'notion' },
+    });
+    assert.equal(joined.isError, false, joined.text);
+    assert.match(joined.text, /Outputs: tasks → clickup, crm → hubspot, doc → notion/);
+    assert.match(joined.text, /answers by itself \(anthropic:fake-model\)/);
+    const id = idOf(joined.text);
+
+    // Bruno asks; the agent answers in the chat and creates the task right away.
+    const cmds = await waitFor(() => commandsOf(id), (c) => c.some((t) => t.startsWith('✓ ')), 30_000);
+    assert.match(cmds[0]!, /^Hi! I'm Meeting Agent/);
+    assert.ok(cmds.includes('Sure, creating it now.'), cmds.join(' | '));
+    assert.ok(cmds.includes('✓ Fix the login page — https://app.clickup.com/t/cu1'), cmds.join(' | '));
+    const live = JSON.parse(clickup.requests[0]!.body) as { name: string; priority: number; markdown_content: string };
+    assert.equal(live.name, 'Fix the login page');
+    assert.equal(live.priority, 2);
+    assert.match(live.markdown_content, /Asked for during the meeting \*\*Acme onboarding\*\* by Bruno/);
+    const st = await s.call('call_status', { call_id: id });
+    assert.match(st.text, /tasks asked for in the meeting: created right away in clickup/);
+    assert.match(st.text, /Created in the meeting:\n- Fix the login page https:\/\/app\.clickup\.com\/t\/cu1/);
+
+    // After the call: plan by the model, then the outputs.
+    await s.call('end_meeting', { call_id: id });
+    const done = await waitFor(() => s.call('call_status', { call_id: id }), (r) => /Document: Minutes → delivered|Status: failed/.test(r.text), 60_000);
+    assert.match(done.text, /Status: planned/);
+    assert.match(done.text, /t1 Add SSO to the login page \[todo · issue · medium · ready\] https:\/\/app\.clickup\.com\/t\/cu2/);
+    assert.match(done.text, /Notes:\n- During the meeting \(Bruno\): Bruno wants the login page fixed this week\./);
+    assert.match(done.text, /CRM update: Acme · 1 contact\(s\) · deal "Acme rollout" → delivered \(hubspot: https:\/\/app\.hubspot\.com\/contacts\/42\/record\/0-3\/\d+\)/);
+    assert.match(done.text, /Document: Minutes → delivered \(notion: https:\/\/www\.notion\.so\/pg1\)/);
+
+    // The plan knew what happened in the meeting and was asked for the CRM and the document.
+    const planReq = brain.requests.map((r) => JSON.parse(r.body) as { system: string; messages: Array<{ content: Array<{ type: string; text?: string }> }> })
+      .find((b) => !/live meeting/.test(b.system))!;
+    const planText = planReq.messages[0]!.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+    assert.match(planReq.system, /"crm": what the call means for the CRM[\s\S]*"doc": the meeting document/);
+    assert.match(planText, /<created_during_meeting>\nTasks already created during the meeting:\n- Fix the login page \(https:\/\/app\.clickup\.com\/t\/cu1\)/);
+    assert.match(planText, /During the meeting \(Bruno\): Bruno wants the login page fixed this week\./);
+
+    // ClickUp: the plan's task, with its criteria.
+    assert.equal(clickup.requests.length, 2);
+    assert.equal(clickup.requests[1]!.path, '/list/L1/task');
+    assert.equal(clickup.requests[1]!.headers.authorization, 'cu-token');
+    assert.match((JSON.parse(clickup.requests[1]!.body) as { markdown_content: string }).markdown_content, /### Acceptance criteria\n- \[ \] works with Google/);
+
+    // HubSpot: company, contact, deal and the note, associated.
+    assert.deepEqual(hubspot.requests.map((r) => `${r.method} ${r.path}`), [
+      'POST /crm/v3/objects/companies/search', 'POST /crm/v3/objects/companies',
+      'POST /crm/v3/objects/contacts/search', 'POST /crm/v3/objects/contacts',
+      'POST /crm/v3/objects/deals', 'POST /crm/v3/objects/notes', 'GET /account-info/v3/details',
+    ]);
+    assert.equal(hubspot.requests[0]!.headers.authorization, 'Bearer hs-token');
+    const typeIds = (i: number) => (JSON.parse(hubspot.requests[i]!.body) as { associations?: Array<{ types: Array<{ associationTypeId: number }> }> })
+      .associations?.map((a) => a.types[0]!.associationTypeId) ?? [];
+    assert.deepEqual(typeIds(3), [279]);            // contact → company
+    assert.deepEqual(typeIds(4), [3, 341]);         // deal → contact, company
+    assert.deepEqual(typeIds(5), [202, 190, 214]);  // note → contact, company, deal
+    const deal = JSON.parse(hubspot.requests[4]!.body) as { properties: Record<string, string> };
+    assert.equal(deal.properties.amount, '12000');
+    assert.equal(deal.properties.dealstage, 'appointmentscheduled');
+
+    // Notion: a page under the parent, the markdown as blocks.
+    const page = JSON.parse(notion.requests[0]!.body) as { parent: { page_id: string }; children: Array<{ type: string }> };
+    assert.equal(notion.requests[0]!.path, '/pages');
+    assert.equal(notion.requests[0]!.headers['notion-version'], '2022-06-28');
+    assert.equal(page.parent.page_id, 'parent-1');
+    assert.deepEqual(page.children.map((c) => c.type), ['heading_1', 'heading_2', 'bulleted_list_item', 'to_do']);
+  } finally {
+    await s.close();
+    await Promise.all([brain.close(), clickup.close(), hubspot.close(), notion.close()]);
   }
 });

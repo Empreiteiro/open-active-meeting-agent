@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // A stand-in for `docker` in the tests. `run` starts a fake bot that follows
-// the real bot's volume contract (status.json, control.json, outputs).
+// the real bot's volume contract (status.json, control.json, outputs, and in
+// the call live.jsonl + commands.jsonl).
 //   env FAKE_DOCKER_STATE  json file: container name → { pid, dir }
 //   env FAKE_BOT_VIDEO     the "recording" the fake bot hands back
+//   env FAKE_BOT_LIVE      json list of live events to write once in the call: [{ after_ms, type, … }]
 
 import { spawn } from 'node:child_process';
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -46,8 +48,26 @@ async function fakeBot(dir) {
   write('status.json', { state: 'joining' });
   await new Promise((r) => setTimeout(r, 500));
   write('status.json', { state: 'in_call', participants: 3 });
+  const live = (e) => appendFileSync(path.join(dir, 'live.jsonl'), `${JSON.stringify({ at: Date.now(), ...e })}\n`);
+  live({ type: 'live', captions: true, chat: true });
+  const script = process.env.FAKE_BOT_LIVE ? JSON.parse(process.env.FAKE_BOT_LIVE) : [];
+  const t0 = Date.now();
+  let next = 0;
+  let commandsRun = 0;
   for (;;) {
     await new Promise((r) => setTimeout(r, 200));
+    while (next < script.length && Date.now() - t0 >= script[next].after_ms) {
+      const { after_ms, ...e } = script[next++];
+      live(e);
+    }
+    // The host's commands: "posted" in the chat.
+    const cf = path.join(dir, 'commands.jsonl');
+    const cmds = existsSync(cf) ? readFileSync(cf, 'utf8').split('\n').filter(Boolean) : [];
+    for (const ln of cmds.slice(commandsRun)) {
+      commandsRun++;
+      const cmd = JSON.parse(ln);
+      live({ type: 'sent', id: cmd.id, ok: true, text: cmd.text });
+    }
     const c = control();
     if (!c.leave) continue;
     if (c.discard) { write('status.json', { state: 'done', discarded: true }); process.exit(0); }
