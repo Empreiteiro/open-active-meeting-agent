@@ -21,7 +21,7 @@ MODELS_DIR    := $(OMA_HOME)/models
 
 .PHONY: help setup macos brew-deps node-check config set engine bot link doctor \
         plugin mcp-claude whisper auth-google auth-teams _auth \
-        join live say end status deliver \
+        ui join live say end status deliver \
         install check build
 
 help: ## this list
@@ -111,6 +111,9 @@ _auth:
 	@$(SET) $(KEY)="$(OMA_HOME)/auth/$(PROVIDER).json"
 
 # ── Using it ──────────────────────────────────────────────────────────────────
+
+ui: ## the web UI: chat with your local agent (Claude Code), follow the meetings [PORT=4141]
+	@$(OMA) ui $(if $(PORT),--port $(PORT))
 
 join: ## join a meeting: URL=… [ACT=after|during|both] [TASKS=…] [CRM=…] [DOC=…] [AUTONOMY=…] [REPO=owner/repo]
 	@[ -n "$(URL)" ] || { echo "usage: make join URL=<meeting link> [ACT=both] [TASKS=clickup] [CRM=hubspot] [DOC=notion]"; exit 1; }

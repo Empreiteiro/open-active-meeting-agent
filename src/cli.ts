@@ -1,6 +1,7 @@
 // oma — the command line. `oma mcp` is the MCP server; the rest does the same
 // from a terminal.
 
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { config } from './config.js';
@@ -22,6 +23,7 @@ import { callLine, callSummary, planDetail, planText } from './views.js';
 const HELP = `oma — open-meeting-agent
 
   oma mcp                         run the MCP server (stdio) for Claude Code, Cursor, Codex…
+  oma ui [--port N] [--no-open]   the web UI: chat with your local agent, follow the meetings
   oma doctor                      check what is set up
   oma bot build                   build the bot's container image (once)
 
@@ -56,6 +58,33 @@ const HELP = `oma — open-meeting-agent
 
 [call] defaults to the latest call. Data: ${config.home}`;
 
+async function runUi(port: number | undefined, open: boolean): Promise<void> {
+  const { startUi } = await import('./ui/server.js');
+  let ui;
+  try {
+    ui = await startUi({ port });
+  } catch (e) {
+    const p = port ?? config.uiPort;
+    // Already running here: open it.
+    const running = (e as NodeJS.ErrnoException).code === 'EADDRINUSE'
+      && await fetch(`http://127.0.0.1:${p}/api/ping`).then((r) => r.json()).then((j) => (j as { app?: string }).app === 'oma-ui').catch(() => false);
+    if (!running) throw (e as NodeJS.ErrnoException).code === 'EADDRINUSE' ? new Error(`port ${p} is in use: oma ui --port <another>`) : e;
+    process.stdout.write(`The UI is already running: http://127.0.0.1:${p}\n`);
+    if (open) openBrowser(`http://127.0.0.1:${p}`);
+    return;
+  }
+  process.stdout.write(`Meeting Agent UI: ${ui.url}  (Ctrl+C stops it)\n`);
+  if (open) openBrowser(ui.url);
+  const stop = () => { void ui.close().then(() => process.exit(0)); };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+}
+
+function openBrowser(url: string): void {
+  const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
+  spawn(cmd as string, args as string[], { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
+}
+
 const resolve = (id?: string) => {
   if (id) return mustGetCall(id);
   const c = latestCall();
@@ -80,6 +109,8 @@ async function main(argv: string[]): Promise<void> {
       pr: { type: 'string' },
       note: { type: 'string' },
       replan: { type: 'boolean' },
+      port: { type: 'string' },
+      'no-open': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -94,6 +125,7 @@ async function main(argv: string[]): Promise<void> {
 
   switch (cmd) {
     case 'mcp': return runMcpServer();
+    case 'ui': return runUi(o.port ? Number(o.port) : undefined, !o['no-open']);
     case 'worker': return runWorker(rest[0]!);
     case 'doctor': return out(await doctor());
     case 'bot':
