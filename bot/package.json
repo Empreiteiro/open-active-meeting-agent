@@ -1,0 +1,26 @@
+{
+  "name": "open-meeting-agent-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The container that joins a Google Meet / Teams call as the agent, records it and hands the recording back through a volume.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "auth": "tsx scripts/login.ts"
+  },
+  "dependencies": {
+    "patchright": "1.59.4",
+    "pino": "9.14.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
