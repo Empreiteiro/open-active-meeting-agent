@@ -5,9 +5,30 @@ export type CallSource = 'bot' | 'meetily' | 'file';
 
 /** How far the agent goes after the meeting without asking.
  *  suggest: builds the plan and waits for the person.
- *  issues:  also opens the GitHub issues.
- *  prs:     also works the tasks and opens the pull requests. */
+ *  issues:  also delivers it: the tasks to the tasks platform (GitHub issues,
+ *           Linear, Jira, ClickUp…), the CRM update, the meeting document.
+ *  prs:     also works the code tasks and opens the pull requests. */
 export type Autonomy = 'suggest' | 'issues' | 'prs';
+
+/** When the agent acts.
+ *  after:  quiet in the meeting; works once it is over (the default).
+ *  during: answers and acts in the meeting when someone addresses it; after
+ *          the call it only keeps the transcript and the plan (nothing is delivered).
+ *  both:   in the meeting and after it. */
+export type ActMode = 'after' | 'during' | 'both';
+
+/** What the agent delivers after the call, and where. "agent" hands it to the
+ *  connected agent (Claude Code, Cursor…), which puts it in place with its own
+ *  tools (MCP connectors for HubSpot, Notion, Google Docs, Asana…). */
+export type TasksTarget = 'github' | 'linear' | 'jira' | 'clickup' | 'webhook' | 'agent';
+export type CrmTarget = 'hubspot' | 'webhook' | 'agent';
+export type DocTarget = 'file' | 'notion' | 'webhook' | 'agent';
+export interface Outputs {
+  tasks: TasksTarget | null;
+  crm: CrmTarget | null;
+  doc: DocTarget | null;
+}
+export type OutputKind = keyof Outputs;
 
 export type CallStatus =
   | 'joining'      // the bot is on its way into the meeting
@@ -46,9 +67,34 @@ export interface PlanTask {
   depends_on: string[];      // task keys
   include: boolean;
   state: TaskState;
+  /** The task's link in the tasks platform (a GitHub issue, Linear, Jira, ClickUp…). */
   issue_url?: string | null;
   pr_url?: string | null;
   notes?: string[];
+}
+
+/** What the call means for the CRM. Only what was said: null when unknown. */
+export interface CrmUpdate {
+  company: { name: string; domain: string | null } | null;
+  contacts: Array<{ name: string; email: string | null; role: string | null; phone: string | null }>;
+  deal: { name: string; stage: string | null; amount: number | null; currency: string | null; close_date: string | null } | null;
+  /** The note logged on the records: what the call was about and what was agreed. */
+  summary: string;
+  next_steps: string[];
+}
+
+/** The meeting document (minutes, a brief, a proposal… per OMA_DOC_TEMPLATE). */
+export interface MeetingDoc {
+  title: string;
+  markdown: string;
+}
+
+/** Where an output was delivered. */
+export interface Delivery {
+  target: string;
+  at: string;
+  url: string | null;
+  detail?: string | null;
 }
 
 export interface Plan {
@@ -57,6 +103,10 @@ export interface Plan {
   summary: string;
   questions: string[];
   tasks: PlanTask[];
+  crm?: CrmUpdate | null;
+  doc?: MeetingDoc | null;
+  /** Where each output went (tasks: only for webhook / agent, the others keep a link per task). */
+  deliveries?: Partial<Record<OutputKind, Delivery>>;
   built_by: string;          // 'host' (the connected agent) or 'provider:model'
   built_at: string;
 }
@@ -73,6 +123,12 @@ export interface Call {
   status: CallStatus;
   error?: string | null;
   autonomy: Autonomy;
+  /** When the agent acts (calls made before this setting existed: after). */
+  act?: ActMode;
+  /** What is delivered after the call and where (missing: tasks to GitHub). */
+  outputs?: Outputs;
+  /** Tasks created in the meeting when someone asked for them. */
+  live_tasks?: Array<{ title: string; url: string | null; at: string }>;
   /** Repositories the tasks may target (owner/repo). */
   repos: string[];
   /** Folder the coding agent works in (the host's cwd when the call started). */

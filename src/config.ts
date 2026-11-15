@@ -4,7 +4,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { Autonomy } from './types.js';
+import type { ActMode, Autonomy, CrmTarget, DocTarget, TasksTarget } from './types.js';
 
 const HOME = process.env.OMA_HOME || path.join(os.homedir(), '.open-meeting-agent');
 
@@ -55,6 +55,18 @@ function llmProvider(): LlmProvider | null {
 }
 
 const autonomy = get('OMA_AUTONOMY');
+const act = get('OMA_ACT');
+
+export const TASKS_TARGETS: readonly TasksTarget[] = ['github', 'linear', 'jira', 'clickup', 'webhook', 'agent'];
+export const CRM_TARGETS: readonly CrmTarget[] = ['hubspot', 'webhook', 'agent'];
+export const DOC_TARGETS: readonly DocTarget[] = ['file', 'notion', 'webhook', 'agent'];
+/** A target from the settings: one of `allowed`, "none"/"off" = nothing, unset = `fallback`. */
+function target<T extends string>(name: string, allowed: readonly T[], fallback: T | null): T | null {
+  const v = get(name)?.toLowerCase();
+  if (!v) return fallback;
+  if (v === 'none' || v === 'off') return null;
+  return allowed.includes(v as T) ? v as T : fallback;
+}
 
 export const config = {
   home: HOME,
@@ -63,6 +75,14 @@ export const config = {
   language: get('OMA_LANGUAGE') ?? 'en',
   agentName: get('OMA_AGENT_NAME') ?? 'Meeting Agent',
   autonomy: (autonomy === 'issues' || autonomy === 'prs' ? autonomy : 'suggest') as Autonomy,
+  /** When the agent acts: after the call, during it, or both. */
+  act: (act === 'during' || act === 'both' ? act : 'after') as ActMode,
+
+  // ── In the meeting (act: during / both) ───────────────────────────────────
+  /** Other names people use to call the agent in the meeting (comma-separated), besides its display name. */
+  liveNames: (get('OMA_LIVE_NAMES') ?? '').split(',').map((x) => x.trim()).filter(Boolean),
+  /** What the agent posts in the chat when it gets in ("off": nothing; unset: a short hello). */
+  liveGreeting: get('OMA_LIVE_GREETING') ?? null,
 
   // ── The bot (a container that joins the meeting) ──────────────────────────
   containerEngine: get('OMA_CONTAINER_ENGINE') ?? null,
@@ -103,6 +123,48 @@ export const config = {
   githubToken: get('GITHUB_TOKEN') ?? get('GH_TOKEN') ?? null,
   /** GitHub Enterprise: https://<host>/api/v3 */
   githubApiUrl: (get('OMA_GITHUB_API_URL') ?? 'https://api.github.com').replace(/\/$/, ''),
+
+  // ── Where the outputs go (defaults for new calls) ─────────────────────────
+  tasksTarget: target('OMA_TASKS_TARGET', TASKS_TARGETS, 'github'),
+  crmTarget: target('OMA_CRM_TARGET', CRM_TARGETS, null),
+  docTarget: target('OMA_DOC_TARGET', DOC_TARGETS, null),
+
+  linearApiKey: get('LINEAR_API_KEY') ?? null,
+  /** Team id, key (ENG) or name. */
+  linearTeam: get('OMA_LINEAR_TEAM') ?? null,
+  linearApiUrl: get('OMA_LINEAR_API_URL') ?? 'https://api.linear.app/graphql',
+
+  jiraBaseUrl: (get('JIRA_BASE_URL') ?? '').replace(/\/$/, '') || null,
+  jiraEmail: get('JIRA_EMAIL') ?? null,
+  jiraApiToken: get('JIRA_API_TOKEN') ?? null,
+  jiraProject: get('OMA_JIRA_PROJECT') ?? null,
+  jiraIssueType: get('OMA_JIRA_ISSUE_TYPE') ?? 'Task',
+
+  clickupToken: get('CLICKUP_API_TOKEN') ?? null,
+  clickupListId: get('OMA_CLICKUP_LIST_ID') ?? null,
+  clickupApiUrl: (get('OMA_CLICKUP_API_URL') ?? 'https://api.clickup.com/api/v2').replace(/\/$/, ''),
+
+  hubspotToken: get('HUBSPOT_TOKEN') ?? null,
+  hubspotApiUrl: (get('OMA_HUBSPOT_API_URL') ?? 'https://api.hubapi.com').replace(/\/$/, ''),
+  /** Deal stage id for new deals (stages are per pipeline; unset: HubSpot's default). */
+  hubspotDealStage: get('OMA_HUBSPOT_DEAL_STAGE') ?? null,
+  hubspotPipeline: get('OMA_HUBSPOT_PIPELINE') ?? null,
+
+  notionToken: get('NOTION_TOKEN') ?? null,
+  /** Where documents go in Notion: a page (children) or a database (rows). */
+  notionParentPage: get('OMA_NOTION_PARENT_PAGE_ID') ?? null,
+  notionDatabase: get('OMA_NOTION_DATABASE_ID') ?? null,
+  notionTitleProperty: get('OMA_NOTION_TITLE_PROPERTY') ?? 'Name',
+  notionApiUrl: (get('OMA_NOTION_API_URL') ?? 'https://api.notion.com/v1').replace(/\/$/, ''),
+
+  /** Folder for documents (target "file"); unset: the call's own folder. */
+  docDir: get('OMA_DOC_DIR') ?? null,
+  /** A markdown file whose structure the meeting document follows. */
+  docTemplate: get('OMA_DOC_TEMPLATE') ?? null,
+
+  webhookUrl: get('OMA_WEBHOOK_URL') ?? null,
+  /** Signs each webhook body: x-oma-signature: sha256=<hex HMAC>. */
+  webhookSecret: get('OMA_WEBHOOK_SECRET') ?? null,
 
   meetilyDb: get('OMA_MEETILY_DB') ?? defaultMeetilyDb(),
 } as const;
