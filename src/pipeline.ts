@@ -1,7 +1,7 @@
 // The life of a call:
-//   join (bot) ─┐
-//   meetily ────┼─→ processing (transcript + screen frames) → needs_plan → planned → tasks
-//   file ───────┘
+//   join (bot) ─┐  (act during/both: answers in the meeting while it lasts — live.ts)
+//   meetily ────┼─→ processing (transcript + screen frames) → needs_plan → planned → outputs
+//   file ───────┘                       (tasks platform, CRM, document — outputs/) → tasks
 // Long work runs in a detached worker process (`oma worker <id>`), so it keeps
 // going when the MCP server or the CLI that started it exits.
 
@@ -12,9 +12,10 @@ import { fileURLToPath } from 'node:url';
 import { applySpeakers, parseTimeline } from './asr/align.js';
 import { transcribe } from './asr/index.js';
 import { config } from './config.js';
-import { distributePlan } from './github.js';
+import { liveStep } from './live.js';
 import { llmConfigured } from './llm/index.js';
 import { extractFrames, probe } from './media/ffmpeg.js';
+import { actsAfter, actsDuring, defaultOutputs, deliverOutputs, outputsOf, parseOutputs } from './outputs/index.js';
 import { buildPlan, PlanEmptyError } from './plan/build.js';
 import {
   botOutputs, botStatus, containerRunning, detectProvider, killBot, requestLeave, startBot,
@@ -24,7 +25,7 @@ import { findScreenRecording } from './sources/screen.js';
 import {
   callPaths, createCall, getPlan, getTranscript, logCall, mustGetCall, saveFrames, saveTranscript, tryLock, unlock, updateCall,
 } from './store.js';
-import type { Autonomy, Call } from './types.js';
+import type { ActMode, Autonomy, Call, OutputKind } from './types.js';
 
 // ── Worker process ─────────────────────────────────────────────────────────
 
@@ -54,6 +55,10 @@ export interface CallOptions {
   title?: string;
   agentName?: string;
   autonomy?: Autonomy;
+  /** When the agent acts (bot calls): after the call, during it, or both. */
+  act?: ActMode;
+  /** Where the outputs go: a target per kind, or "none". */
+  outputs?: Partial<Record<OutputKind, string | null>>;
   repos?: string[];
   workdir?: string | null;
   language?: string;
@@ -61,6 +66,8 @@ export interface CallOptions {
 
 const base = (o: CallOptions) => ({
   autonomy: o.autonomy ?? config.autonomy,
+  act: o.act ?? config.act,
+  outputs: parseOutputs(o.outputs, defaultOutputs()),
   repos: (o.repos ?? []).map((r) => r.trim()).filter((r) => /^[\w.-]+\/[\w.-]+$/.test(r)),
   workdir: o.workdir ?? null,
   agent_name: o.agentName ?? config.agentName,
@@ -75,7 +82,7 @@ export async function joinMeeting(url: string, o: CallOptions = {}): Promise<Cal
     meeting_url: url, provider,
   });
   try {
-    const container = await startBot(call.id, { url, provider, displayName: call.agent_name });
+    const container = await startBot(call.id, { url, provider, displayName: call.agent_name, live: actsDuring(call) });
     updateCall(call.id, { container });
   } catch (e) {
     updateCall(call.id, { status: 'failed', error: (e as Error).message });
@@ -89,7 +96,7 @@ export async function importRecording(file: string, o: CallOptions = {}): Promis
   const abs = path.resolve(file);
   if (!existsSync(abs)) throw new Error(`file not found: ${abs}`);
   await probe(abs); // fails early on something ffmpeg can't read
-  const call = createCall({ ...base(o), title: o.title ?? path.basename(abs), source: 'file', status: 'processing' });
+  const call = createCall({ ...base(o), act: 'after', title: o.title ?? path.basename(abs), source: 'file', status: 'processing' });
   const media = callPaths(call.id).media;
   mkdirSync(media, { recursive: true });
   copyFileSync(abs, path.join(media, `input${path.extname(abs) || '.bin'}`));
@@ -100,7 +107,7 @@ export async function importRecording(file: string, o: CallOptions = {}): Promis
 export async function importMeetily(meetingId: string, o: CallOptions = {}): Promise<Call> {
   const m = await readMeetilyMeeting(meetingId);
   const call = createCall({
-    ...base(o), title: o.title ?? m.meeting.title ?? 'meetily meeting', source: 'meetily', status: 'processing', meetily_id: meetingId,
+    ...base(o), act: 'after', title: o.title ?? m.meeting.title ?? 'meetily meeting', source: 'meetily', status: 'processing', meetily_id: meetingId,
   });
   if (m.segments.length) saveTranscript(call.id, m.segments);
   if (m.notes?.trim()) updateCall(call.id, { notes: [{ at: new Date().toISOString(), text: `Notes taken during the meeting:\n${m.notes.trim()}` }] });
@@ -176,11 +183,18 @@ export async function runWorker(callId: string): Promise<void> {
 
 async function followBot(callId: string): Promise<Call> {
   let gone = 0;
+  let lastCheck = 0;
   for (;;) {
     const call = mustGetCall(callId);
     if (call.status === 'cancelled') return call;
     const st = botStatus(callId);
     if (st?.state === 'in_call' && call.status !== 'in_call') updateCall(callId, { status: 'in_call', joined_at: new Date().toISOString() });
+    // In the meeting (act during/both): answer when someone addresses the agent.
+    const live = actsDuring(call);
+    if (live) await liveStep(callId).catch((e) => logCall(callId, `live: ${(e as Error).message}`));
+    await sleep(live ? 1_000 : 3_000);
+    if (Date.now() - lastCheck < 3_000) continue;
+    lastCheck = Date.now();
     if (st?.state === 'failed') {
       return updateCall(callId, { status: 'failed', error: `The bot failed${st.step && st.step !== 'bot' ? ` (${st.step})` : ''}: ${st.error ?? 'unknown error'}`, ended_at: new Date().toISOString() });
     }
@@ -196,7 +210,6 @@ async function followBot(callId: string): Promise<Call> {
         return updateCall(callId, { status: 'failed', error: 'The bot stopped without a recording (see `docker logs` or worker.log).', ended_at: new Date().toISOString() });
       }
     } else gone = 0;
-    await sleep(3_000);
   }
 }
 
@@ -254,8 +267,10 @@ function findInput(dir: string): string | null {
   return f ? path.join(dir, f) : null;
 }
 
-/** After processing: the plan (when a model is configured), the issues
- *  (autonomy issues/prs), and the coding agent (OMA_AGENT_COMMAND). */
+/** After processing: the plan (when a model is configured), the outputs
+ *  (autonomy issues/prs: tasks platform, CRM, document), and the coding agent
+ *  (OMA_AGENT_COMMAND). A call where the agent only acted during the meeting
+ *  keeps its plan and delivers nothing. */
 async function afterProcessing(callId: string): Promise<void> {
   let call = mustGetCall(callId);
   if (call.status !== 'needs_plan' && call.status !== 'planned') return;
@@ -269,12 +284,16 @@ async function afterProcessing(callId: string): Promise<void> {
     }
   }
   call = mustGetCall(callId);
-  if (getPlan(callId) && call.autonomy !== 'suggest' && call.repos.length) {
+  if (!actsAfter(call)) {
+    logCall(callId, 'act "during": the plan is kept, nothing is delivered');
+    return;
+  }
+  if (getPlan(callId) && call.autonomy !== 'suggest') {
     try {
-      const res = await distributePlan(callId);
-      logCall(callId, `issues: ${res.filter((r) => r.issue).length} created/linked`);
+      const res = await deliverOutputs(callId);
+      logCall(callId, `outputs: ${res.map((r) => `${r.kind}→${r.target} ${r.ok ? 'ok' : 'failed'}`).join(', ') || 'none'}`);
     } catch (e) {
-      logCall(callId, `issues failed: ${(e as Error).message}`);
+      logCall(callId, `outputs failed: ${(e as Error).message}`);
     }
   }
   runAgentHook(callId);
@@ -286,11 +305,16 @@ export function agentPrompt(call: Call, planned: boolean): string {
   const plan = planned
     ? `The plan is ready (get_plan call_id ${id}).`
     : `First build the plan: read the call with get_call_context (call_id ${id}) and save it with save_plan.`;
+  const outs = outputsOf(call);
+  const forYou = (Object.keys(outs) as OutputKind[]).filter((k) => outs[k] === 'agent');
+  const deliver = forYou.length
+    ? `deliver the outputs with distribute_plan (call_id ${id}) — the ${forYou.join(', ')} ${forYou.length > 1 ? 'are' : 'is'} yours to put in place with your own tools, then record_output / update_task with the links`
+    : `deliver the outputs with distribute_plan (call_id ${id})`;
   const work = call.autonomy === 'suggest'
     ? 'Stop after the plan: the person reviews it before anything else.'
     : call.autonomy === 'issues'
-      ? `Then open the issues with distribute_plan (call_id ${id}) and stop.`
-      : `Then work the tasks one by one: next_task (call_id ${id}), implement, open the pull request, update_task — until next_task says there is nothing left.`;
+      ? `Then ${deliver}, and stop.`
+      : `Then ${deliver}; then work the code tasks one by one: next_task (call_id ${id}), implement, open the pull request, update_task — until next_task says there is nothing left.`;
   return `The meeting "${call.title}" just ended (open-meeting-agent call ${id}). Use the meeting-agent MCP tools. ${plan} ${work}`;
 }
 

@@ -11,6 +11,8 @@ import type { PlanBlock } from '../plan/prompt.js';
 
 export interface Turn { role: 'user' | 'assistant'; content: string | PlanBlock[] }
 export interface ChatResult { text: string; model: string; inputTokens: number; outputTokens: number }
+/** Per call: a short answer in the meeting doesn't need the planning budget. */
+export interface ChatOptions { maxTokens?: number; timeoutMs?: number }
 
 export class LlmError extends Error {
   constructor(readonly code: 'llm_not_configured' | 'llm_refused' | 'llm_truncated' | 'llm_failed', message: string) {
@@ -32,21 +34,21 @@ function imageData(file: string): string {
   return readFileSync(file).toString('base64');
 }
 
-export async function chat(system: string, turns: Turn[]): Promise<ChatResult> {
+export async function chat(system: string, turns: Turn[], opts: ChatOptions = {}): Promise<ChatResult> {
   if (!config.llm || !config.llmModel) {
     throw new LlmError('llm_not_configured', 'No planning model configured (OMA_LLM_PROVIDER + OMA_LLM_MODEL). Use get_call_context and save_plan to build the plan in the connected agent instead.');
   }
-  return config.llm === 'anthropic' ? anthropic(system, turns) : openaiCompatible(system, turns);
+  return config.llm === 'anthropic' ? anthropic(system, turns, opts) : openaiCompatible(system, turns, opts);
 }
 
-async function post(url: string, headers: Record<string, string>, body: unknown): Promise<Record<string, unknown>> {
+async function post(url: string, headers: Record<string, string>, body: unknown, timeoutMs: number): Promise<Record<string, unknown>> {
   let r: Response;
   try {
     r = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...headers },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(config.llmTimeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
     throw new LlmError('llm_failed', `${url}: ${(e as Error).message}`);
@@ -60,7 +62,7 @@ async function post(url: string, headers: Record<string, string>, body: unknown)
   }
 }
 
-async function anthropic(system: string, turns: Turn[]): Promise<ChatResult> {
+async function anthropic(system: string, turns: Turn[], opts: ChatOptions): Promise<ChatResult> {
   const key = config.llmApiKey ?? config.anthropicApiKey;
   if (!key) throw new LlmError('llm_not_configured', 'Anthropic needs OMA_LLM_API_KEY or ANTHROPIC_API_KEY.');
   const base = (config.llmBaseUrl ?? 'https://api.anthropic.com').replace(/\/$/, '');
@@ -73,8 +75,8 @@ async function anthropic(system: string, turns: Turn[]): Promise<ChatResult> {
         : { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageData(b.file) } }),
   }));
   const res = await post(`${base}/v1/messages`, { 'x-api-key': key, 'anthropic-version': '2023-06-01' }, {
-    model: config.llmModel, max_tokens: MAX_TOKENS, system, messages,
-  });
+    model: config.llmModel, max_tokens: opts.maxTokens ?? MAX_TOKENS, system, messages,
+  }, opts.timeoutMs ?? config.llmTimeoutMs);
   const stop = res.stop_reason as string | undefined;
   if (stop === 'refusal') throw new LlmError('llm_refused', 'The model refused to plan this call.');
   if (stop === 'max_tokens') throw new LlmError('llm_truncated', 'The plan went over the output limit.');
@@ -88,7 +90,7 @@ async function anthropic(system: string, turns: Turn[]): Promise<ChatResult> {
   };
 }
 
-async function openaiCompatible(system: string, turns: Turn[]): Promise<ChatResult> {
+async function openaiCompatible(system: string, turns: Turn[], opts: ChatOptions): Promise<ChatResult> {
   const base = (config.llmBaseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '');
   const key = config.llmApiKey ?? (base.includes('api.openai.com') ? config.openaiApiKey : null);
   const messages = [
@@ -103,8 +105,8 @@ async function openaiCompatible(system: string, turns: Turn[]): Promise<ChatResu
     })),
   ];
   const res = await post(`${base}/chat/completions`, key ? { authorization: `Bearer ${key}` } : {}, {
-    model: config.llmModel, max_tokens: MAX_TOKENS, messages,
-  });
+    model: config.llmModel, max_tokens: opts.maxTokens ?? MAX_TOKENS, messages,
+  }, opts.timeoutMs ?? config.llmTimeoutMs);
   const choice = (Array.isArray(res.choices) ? res.choices[0] : null) as { message?: { content?: unknown; refusal?: string }; finish_reason?: string } | null;
   if (choice?.message?.refusal) throw new LlmError('llm_refused', choice.message.refusal);
   if (choice?.finish_reason === 'length') throw new LlmError('llm_truncated', 'The plan went over the output limit.');

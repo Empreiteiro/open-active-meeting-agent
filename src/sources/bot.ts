@@ -4,9 +4,12 @@
 //   status.json   written by the bot (starting → joining → in_call → done | failed)
 //   control.json  written by us ({ leave: true } ends the call, discard drops it)
 //   audio.m4a, recording.mp4, timeline.json, exit.json   left by the bot at the end
+//   live.jsonl     appended by the bot in the call: caption turns, chat messages, what it posted
+//   commands.jsonl appended by us: {id, type: "chat", text} — the bot posts it in the meeting chat
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
@@ -84,7 +87,7 @@ export async function buildBotImage(onLine?: (l: string) => void): Promise<void>
 
 export const containerName = (callId: string) => `oma-bot-${callId}`;
 
-export async function startBot(callId: string, a: { url: string; provider: Provider; displayName: string }): Promise<string> {
+export async function startBot(callId: string, a: { url: string; provider: Provider; displayName: string; live?: boolean }): Promise<string> {
   const engine = await containerEngine();
   if (!(await botImageReady())) {
     throw new Error(`The bot image ${config.botImage} is not built yet. Run \`oma bot build\` (or the build_bot tool) once — it takes a few minutes.`);
@@ -92,7 +95,7 @@ export async function startBot(callId: string, a: { url: string; provider: Provi
   const dir = callPaths(callId).bot;
   mkdirSync(dir, { recursive: true });
   writeJson(path.join(dir, 'status.json'), { state: 'starting', updated_at: new Date().toISOString() } satisfies BotStatus);
-  rmSync(path.join(dir, 'control.json'), { force: true });
+  for (const f of ['control.json', 'live.jsonl', 'commands.jsonl']) rmSync(path.join(dir, f), { force: true });
   const auth = a.provider === 'google_meet' ? config.botAuthGoogle : config.botAuthTeams;
   const args = [
     'run', '-d', '--rm', '--name', containerName(callId), '--shm-size=1g',
@@ -106,6 +109,7 @@ export async function startBot(callId: string, a: { url: string; provider: Provi
     '-e', `BOT_LOCALE=${config.botLocale}`,
     '-e', `BOT_TIMEZONE=${config.botTimezone}`,
     '-e', `MAX_MEETING_MINUTES=${config.maxMeetingMinutes}`,
+    ...(a.live ? ['-e', 'LIVE_CHAT=1'] : []),
     config.botImage,
   ];
   const r = await exec(engine, args);
@@ -132,6 +136,34 @@ export function requestLeave(callId: string, discard = false): void {
 export async function killBot(callId: string): Promise<void> {
   const engine = await containerEngine().catch(() => null);
   if (engine) await exec(engine, ['rm', '-f', containerName(callId)]);
+}
+
+/** One event the bot wrote to live.jsonl. */
+export type LiveEvent =
+  | { type: 'caption'; seg: string; speaker: string; text: string; final: boolean; at: number }
+  | { type: 'chat'; speaker: string; text: string; at: number }
+  | { type: 'sent'; id: string; ok: boolean; text?: string; error?: string; at: number }
+  | { type: 'live'; captions: boolean; chat: boolean; at: number };
+
+export function readLiveEvents(callId: string): LiveEvent[] {
+  const file = path.join(callPaths(callId).bot, 'live.jsonl');
+  if (!existsSync(file)) return [];
+  const out: LiveEvent[] = [];
+  for (const ln of readFileSync(file, 'utf8').split('\n')) {
+    if (!ln.trim()) continue;
+    try { out.push(JSON.parse(ln) as LiveEvent); } catch { /* a line being written */ }
+  }
+  return out;
+}
+
+/** Ask the bot to post a message in the meeting chat. Returns the command id
+ *  (its result comes back as a "sent" event in live.jsonl). */
+export function sendBotCommand(callId: string, text: string): string {
+  const id = `k${Date.now().toString(36)}${randomBytes(2).toString('hex')}`;
+  const dir = callPaths(callId).bot;
+  mkdirSync(dir, { recursive: true });
+  appendFileSync(path.join(dir, 'commands.jsonl'), `${JSON.stringify({ id, type: 'chat', text, at: new Date().toISOString() })}\n`);
+  return id;
 }
 
 export function botOutputs(callId: string): { audio: string | null; video: string | null; timeline: string | null; exit: Record<string, unknown> | null } {
