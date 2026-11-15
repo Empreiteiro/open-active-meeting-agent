@@ -7,13 +7,15 @@ One Node process (`dist/oma.mjs`, bundled from `src/`) plays three roles:
 - **Worker** (`oma worker <call>`, `runWorker` in `src/pipeline.ts`) — started
   detached for each call, so a meeting keeps being followed and processed after
   the MCP server or the terminal that started it is gone. One per call (a lock
-  file in the call folder; a dead holder is taken over).
+  file in the call folder; a dead holder is taken over). While the bot is in a
+  meeting with `act` during/both it also runs the live loop (`liveStep`).
 
 ```
 src/
   cli.ts              entry point (oma …)
   mcp/server.ts       MCP tools, prompt, setup check
-  pipeline.ts         join / import / end / cancel, the worker, after-processing (plan, issues, agent hook)
+  pipeline.ts         join / import / end / cancel, the worker, after-processing (plan, outputs, agent hook)
+  live.ts             the agent in the meeting: live transcript, mentions, answers (model / connected agent / "noted")
   store.ts            calls on disk (~/.open-meeting-agent/calls/<id>/…), atomic JSON writes, lock
   sources/bot.ts      the bot container: start, status, leave, kill, outputs
   sources/meetily.ts  meetily's SQLite (read-only): meetings, timed transcript, notes, audio
@@ -24,8 +26,11 @@ src/
   llm/                Anthropic Messages / OpenAI-compatible chat (fetch only)
   tasks.ts            ready tasks, next_task, update_task, the brief, autonomy rules
   github.ts           issues (GITHUB_TOKEN or gh)
+  outputs/            delivering the plan: index (targets, deliverOutputs, live task creation),
+                      tasks (Linear, Jira, ClickUp), crm (HubSpot), notion, webhook, http
   views.ts            text views for tools and CLI
-bot/                  the meeting bot (its own package + Dockerfile)
+bot/                  the meeting bot (its own package + Dockerfile); live.ts + liveText.ts read the
+                      captions and chat and post in the chat
 skills/               Claude Code plugin skills
 .claude-plugin/       plugin + marketplace manifests (the repo root is the plugin)
 desktop/              meetily (submodule): the local recorder app
@@ -47,6 +52,12 @@ joining → in_call → processing → needs_plan → planned
   `blocked` / `skipped`. A task is ready when every task it depends on is done
   or skipped.
 
+`act` decides what happens around these states: with `during` / `both` the
+worker answers in the meeting while the call is `in_call`; with `during`,
+after-processing stops at the plan (nothing is delivered, no agent hook).
+After the plan, with autonomy `issues` / `prs`, `deliverOutputs` sends each
+output to its target ([outputs.md](outputs.md)).
+
 ## The bot ↔ host contract
 
 The bot never talks to a server. Its volume (`calls/<id>/bot`, mounted at `/out`):
@@ -55,11 +66,27 @@ The bot never talks to a server. Its volume (`calls/<id>/bot`, mounted at `/out`
 |---|---|---|
 | `status.json` | bot | `starting → joining → in_call → leaving → done` or `failed` (+ `step`, `error`, `participants`) |
 | `control.json` | host | `{ "leave": true }` ends the call; `"discard": true` keeps nothing |
+| `live.jsonl` | bot | appended while in the call: `{type:"caption", seg, speaker, text, final}` (a non-final turn is replaced by the next event with its `seg`), `{type:"chat", speaker, text}`, `{type:"sent", id, ok, error?}`, `{type:"live", captions, chat}` |
+| `commands.jsonl` | host | appended: `{id, type:"chat", text}` — the bot posts each one in the chat, once, in order |
 | `audio.m4a`, `recording.mp4` | bot | at the end (16 kHz mono audio; 1280×720 screen + audio) |
 | `timeline.json` | bot | who spoke when: `{ transcriptEntries: [{ participant: { displayName }, startTime: "12.3s", endTime }] }` |
 | `exit.json` | bot | why it left (`ended`, `manual`, `alone`, `max_duration`, `interrupted`…), seconds in the call, whether it saw anyone |
 
 A container that disappears without `done` is processed with whatever it left.
+The bot starts with `LIVE_CHAT=1` when the call acts during the meeting (the
+chat panel opens as it gets in; otherwise only when it has something to post).
+
+## The agent in the meeting
+
+The bot turns caption snapshots into turns (`bot/src/liveText.ts`: a turn
+settles after a 2 s pause or when someone else speaks; long turns whose first
+lines scroll out keep their text) and reads new chat lines. The worker's
+`liveStep` reads `live.jsonl`, greets once, and for every settled line that
+names the agent (speech or chat) waits for the person to finish, then answers:
+with the planning model (reply, note, task created now), or leaves it to the
+connected agent when it called `watch_meeting` in the last 90 s, or posts
+"noted" and keeps the request as a note. `live-state.json` remembers what was
+handled; `live-watch.json` when the connected agent last watched.
 
 ## The plan
 

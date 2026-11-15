@@ -19,7 +19,8 @@ claude plugin marketplace add /ABS/PATH/open-meeting-agent
 claude plugin install meeting-agent@open-meeting-agent
 ```
 
-Skills: `/meeting-agent:join-meeting <link>`, `/meeting-agent:plan-meeting`,
+Skills: `/meeting-agent:join-meeting <link>`, `/meeting-agent:live-meeting`
+(Claude Code answers in the meeting), `/meeting-agent:plan-meeting`,
 `/meeting-agent:work-on-meeting`, `/meeting-agent:meeting-agent-setup`.
 
 ## Claude Code — MCP only

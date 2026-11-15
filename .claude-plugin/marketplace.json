@@ -5,7 +5,7 @@
     {
       "name": "meeting-agent",
       "source": "./",
-      "description": "An agent that joins your meetings, watches the shared screen and turns the call into a plan your coding agent executes."
+      "description": "An agent that joins your meetings, answers when called, and turns the call into a plan delivered where your team works (tasks, CRM, document) and executed by your coding agent."
     }
   ]
 }

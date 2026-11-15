@@ -1,7 +1,7 @@
 {
   "name": "open-meeting-agent",
   "version": "0.1.0",
-  "description": "A local agent that joins your meetings, watches the shared screen and turns the call into a plan your coding agent executes \u2014 as an MCP server and a Claude Code plugin.",
+  "description": "A local agent that joins your meetings, answers when called, and turns the call into a plan delivered where your team works and executed by your coding agent \u2014 as an MCP server and a Claude Code plugin.",
   "license": "MIT",
   "type": "module",
   "bin": {
