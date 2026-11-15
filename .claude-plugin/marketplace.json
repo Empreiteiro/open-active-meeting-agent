@@ -1,0 +1,11 @@
+{
+  "name": "open-meeting-agent",
+  "owner": { "name": "open-meeting-agent contributors" },
+  "plugins": [
+    {
+      "name": "meeting-agent",
+      "source": "./",
+      "description": "An agent that joins your meetings, watches the shared screen and turns the call into a plan your coding agent executes."
+    }
+  ]
+}

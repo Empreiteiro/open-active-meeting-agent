@@ -1,0 +1,14 @@
+{
+  "name": "meeting-agent",
+  "version": "0.1.0",
+  "description": "An agent that joins your Google Meet / Teams call, watches the shared screen, and turns what you asked for into a plan it then carries out — issues, code, pull requests. Local: recordings, transcripts and plans stay on your machine.",
+  "author": { "name": "open-meeting-agent contributors" },
+  "license": "MIT",
+  "keywords": ["meetings", "google-meet", "teams", "meetily", "mcp", "planning", "agent"],
+  "mcpServers": {
+    "meeting-agent": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/oma.mjs", "mcp"]
+    }
+  }
+}
