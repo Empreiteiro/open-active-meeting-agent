@@ -79,8 +79,8 @@ make setup      # Homebrew deps, a config file, the bot image, the oma command
 make doctor     # what is ready
 ```
 
-`make help` lists the rest (`make plugin` for Claude Code, `make whisper` for
-local transcription, `make join URL=…`). By hand:
+The Makefile also covers transcription, Claude Code and meetings —
+see [Make commands](#make-commands-macos). By hand:
 
 ```bash
 brew install ffmpeg
@@ -159,6 +159,91 @@ The microphone becomes "Me" and the system audio "Others"
 (`OMA_MEETILY_ME_NAME`, `OMA_MEETILY_OTHERS_NAME`). The desktop app itself is
 meetily, linked as a submodule in [`desktop/`](desktop/) — see
 [docs/meetily.md](docs/meetily.md).
+
+## Make commands (macOS)
+
+The [Makefile](Makefile) wraps setup and everyday use. Nothing needs sudo.
+Settings go to `~/.open-meeting-agent/config.json` (`OMA_HOME=<folder> make …`
+for another place). `make help` lists the targets.
+
+### First time
+
+```bash
+make setup      # Node + ffmpeg, the config file, a container engine, the bot image, oma on the PATH
+make whisper    # local transcription (or an API: make set KV="OMA_ASR_API_KEY=sk-…")
+make plugin     # the Claude Code plugin
+make doctor     # what is ready
+```
+
+`make setup` checks for macOS, Homebrew and Node ≥ 22.13, then runs these
+steps (each one also runs on its own):
+
+| Target | What it does |
+|---|---|
+| `make brew-deps` | installs Node and ffmpeg with Homebrew when they are missing |
+| `make config` | creates `config.json` from [config.example.json](config.example.json) (only you can read it); an existing one is kept |
+| `make engine` | makes sure a container engine runs: starts OrbStack, Docker Desktop or Colima when installed and waits up to 2 minutes. It installs none: `brew install --cask orbstack` |
+| `make bot` | builds the bot's image: once (~3 GB, a few minutes), and again after a change in `bot/` |
+| `make link` | links `oma` into Homebrew's `bin` folder (`BIN_DIR=<folder>` for another) |
+| `make doctor` | what is ready and what is missing |
+
+### Settings
+
+```bash
+make set KV="OMA_ACT=both OMA_TASKS_TARGET=clickup OMA_CRM_TARGET=hubspot"
+make set KV="CLICKUP_API_TOKEN=pk_… OMA_CLICKUP_LIST_ID=901…"
+make set KV="OMA_CRM_TARGET="      # an empty value removes the key
+```
+
+`make set` changes only the keys you name. Values can't contain spaces (edit
+`config.json` for those), and tokens typed here stay in your shell history —
+editing the file avoids that. The keys are in [Configuration](#configuration).
+
+### Optional
+
+| Target | What it does |
+|---|---|
+| `make whisper` | installs whisper.cpp, downloads a model to `~/.open-meeting-agent/models` and sets `OMA_WHISPER_MODEL`. `WHISPER_MODEL=large-v3-turbo` by default (~1.6 GB); `small`, `medium`… for others |
+| `make auth-google` / `make auth-teams` | opens a browser to sign the bot in to its own account (log in, then press Enter in the terminal); the first run installs the bot's npm dependencies and a Chromium. Saves the session to `~/.open-meeting-agent/auth/` and sets `OMA_BOT_AUTH_GOOGLE` / `OMA_BOT_AUTH_TEAMS`: the bot joins as that account instead of a guest (Teams may give guests no chat) |
+| `make plugin` | installs the Claude Code plugin from this folder |
+| `make mcp-claude` | adds only the MCP server to Claude Code, without the plugin |
+
+### In a meeting
+
+```bash
+make join URL=https://meet.google.com/abc-defg-hij
+make join URL=https://meet.google.com/abc-defg-hij ACT=both TASKS=clickup CRM=hubspot DOC=notion AUTONOMY=issues
+make join URL=<teams link> REPO=acme/app AUTONOMY=prs
+make live                          # what is being said (captions and chat)
+make say CALL=<id> TEXT="On it."   # post in the meeting chat
+make end                           # the agent leaves; the call is processed
+make status
+make deliver ONLY=crm              # deliver the outputs now (all, or one)
+```
+
+| Variable | Values |
+|---|---|
+| `URL` | the Google Meet or Teams link (required by `join`) |
+| `ACT` | `after` · `during` · `both` — when the agent acts ([docs/live.md](docs/live.md)) |
+| `TASKS` | `github` · `linear` · `jira` · `clickup` · `webhook` · `agent` · `none` |
+| `CRM` | `hubspot` · `webhook` · `agent` · `none` |
+| `DOC` | `file` · `notion` · `webhook` · `agent` · `none` ([docs/outputs.md](docs/outputs.md)) |
+| `AUTONOMY` | `suggest` · `issues` · `prs` |
+| `REPO` | `owner/repo`, for GitHub issues and pull requests |
+| `CALL` | a call id (`oma list`); without it, the latest call (`say` needs it) |
+| `ONLY` | `tasks` · `crm` · `doc` |
+
+A variable left out takes the default from `config.json`. `make deliver` sends
+only what hasn't been delivered yet: use it with autonomy `suggest`, or after
+fixing a target's settings.
+
+### Development
+
+| Target | What it does |
+|---|---|
+| `make install` | npm dependencies, for the host and the bot |
+| `make check` | typecheck, tests, build, and the bot's typecheck — run it before committing |
+| `make build` | rebuilds `dist/oma.mjs` (commit it) |
 
 ## MCP tools
 
@@ -275,6 +360,8 @@ npm run typecheck && npm test
 npm run build                # → dist/oma.mjs (commit it: the plugin runs it)
 cd bot && npm install && npm run typecheck
 ```
+
+Or `make install` once, then `make check`.
 
 [docs/architecture.md](docs/architecture.md) explains the pieces.
 
