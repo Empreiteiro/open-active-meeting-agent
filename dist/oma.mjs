@@ -49,10 +49,10 @@ function fileConfig() {
 }
 function defaultMeetilyDb() {
   const id = "com.meetily.ai";
-  const file2 = "meeting_minutes.sqlite";
-  if (process.platform === "darwin") return path.join(os.homedir(), "Library", "Application Support", id, file2);
-  if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), id, file2);
-  return path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), id, file2);
+  const file3 = "meeting_minutes.sqlite";
+  if (process.platform === "darwin") return path.join(os.homedir(), "Library", "Application Support", id, file3);
+  if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), id, file3);
+  return path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), id, file3);
 }
 function asrProvider() {
   const v = get("OMA_ASR");
@@ -444,8 +444,8 @@ function llmLabel() {
   if (config.llm === "command") return `command:${config.llmCommand?.split(/\s+/)[0] ?? ""}`;
   return `${config.llm}:${config.llmModel}`;
 }
-function imageData(file2) {
-  return readFileSync2(file2).toString("base64");
+function imageData(file3) {
+  return readFileSync2(file3).toString("base64");
 }
 async function chat(system, turns, opts = {}) {
   if (!llmConfigured()) {
@@ -721,20 +721,20 @@ function callDir(id) {
   if (!/^[a-z0-9-]{6,64}$/.test(id)) throw new Error(`invalid call id: ${id}`);
   return path2.join(config.callsDir, id);
 }
-function readJson(file2) {
-  if (!existsSync2(file2)) return null;
+function readJson(file3) {
+  if (!existsSync2(file3)) return null;
   try {
-    return JSON.parse(readFileSync3(file2, "utf8"));
+    return JSON.parse(readFileSync3(file3, "utf8"));
   } catch {
     return null;
   }
 }
-function writeJson(file2, value) {
-  mkdirSync2(path2.dirname(file2), { recursive: true });
-  const tmp = `${file2}.${process.pid}.${randomBytes(3).toString("hex")}.tmp`;
+function writeJson(file3, value) {
+  mkdirSync2(path2.dirname(file3), { recursive: true });
+  const tmp = `${file3}.${process.pid}.${randomBytes(3).toString("hex")}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  renameSync(tmp, file2);
+  renameSync(tmp, file3);
 }
 function newCallId() {
   const d = /* @__PURE__ */ new Date();
@@ -790,16 +790,16 @@ function logCall(id, line) {
   }
 }
 function tryLock(id) {
-  const file2 = callPaths(id).lock;
-  const held = readJson(file2);
+  const file3 = callPaths(id).lock;
+  const held = readJson(file3);
   if (held && held.pid !== process.pid && pidAlive(held.pid)) return false;
-  writeJson(file2, { pid: process.pid, at: (/* @__PURE__ */ new Date()).toISOString() });
+  writeJson(file3, { pid: process.pid, at: (/* @__PURE__ */ new Date()).toISOString() });
   return true;
 }
 function unlock(id) {
-  const file2 = callPaths(id).lock;
-  const held = readJson(file2);
-  if (held?.pid === process.pid) rmSync(file2, { force: true });
+  const file3 = callPaths(id).lock;
+  const held = readJson(file3);
+  if (held?.pid === process.pid) rmSync(file3, { force: true });
 }
 function pidAlive(pid) {
   try {
@@ -1590,10 +1590,10 @@ async function deliverDoc(callId, target2) {
   } else {
     const dir3 = config.docDir ?? callPaths(callId).dir;
     mkdirSync3(dir3, { recursive: true });
-    const file2 = path3.join(dir3, config.docDir ? `${(call.joined_at ?? call.created_at).slice(0, 10)}-${slug(doc.title)}.md` : "document.md");
-    writeFileSync2(file2, `${doc.markdown.trim()}
+    const file3 = path3.join(dir3, config.docDir ? `${(call.joined_at ?? call.created_at).slice(0, 10)}-${slug(doc.title)}.md` : "document.md");
+    writeFileSync2(file3, `${doc.markdown.trim()}
 `);
-    url = file2;
+    url = file3;
   }
   recordDelivery(callId, plan, "doc", { target: target2, at: (/* @__PURE__ */ new Date()).toISOString(), url });
   return { kind: "doc", target: target2, ok: true, lines: [`${doc.title}${url ? ` \u2192 ${url}` : ""}`], url };
@@ -1620,7 +1620,7 @@ _Asked for during the meeting **${call.title}**${t.requested_by ? ` by ${t.reque
   } else url = (await createTaskIn(target2, { title: t.title, priority: t.priority, markdown })).url;
   return { url, target: target2 };
 }
-var OUTPUT_KINDS, TARGETS, actsDuring, actsAfter, defaultOutputs, slug;
+var OUTPUT_KINDS, TARGETS, isLiveSource, actsDuring, actsAfter, defaultOutputs, slug;
 var init_outputs = __esm({
   "src/outputs/index.ts"() {
     "use strict";
@@ -1634,8 +1634,9 @@ var init_outputs = __esm({
     init_webhook();
     OUTPUT_KINDS = ["tasks", "crm", "doc"];
     TARGETS = { tasks: TASKS_TARGETS, crm: CRM_TARGETS, doc: DOC_TARGETS };
-    actsDuring = (call) => call.source === "bot" && actOf(call) !== "after";
-    actsAfter = (call) => !(call.source === "bot" && actOf(call) === "during");
+    isLiveSource = (call) => call.source === "bot" || call.source === "huddle";
+    actsDuring = (call) => isLiveSource(call) && actOf(call) !== "after";
+    actsAfter = (call) => !(isLiveSource(call) && actOf(call) === "during");
     defaultOutputs = () => ({ tasks: config.tasksTarget, crm: config.crmTarget, doc: config.docTarget });
     slug = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "meeting";
   }
@@ -1891,10 +1892,10 @@ async function killBot(callId) {
   if (engine) await exec(engine, ["rm", "-f", containerName(callId)]);
 }
 function readLiveEvents(callId) {
-  const file2 = path4.join(callPaths(callId).bot, "live.jsonl");
-  if (!existsSync3(file2)) return [];
+  const file3 = path4.join(callPaths(callId).bot, "live.jsonl");
+  if (!existsSync3(file3)) return [];
   const out = [];
-  for (const ln of readFileSync4(file2, "utf8").split("\n")) {
+  for (const ln of readFileSync4(file3, "utf8").split("\n")) {
     if (!ln.trim()) continue;
     try {
       out.push(JSON.parse(ln));
@@ -1927,8 +1928,570 @@ var init_bot = __esm({
   }
 });
 
-// src/live.ts
+// src/media/ffmpeg.ts
+var ffmpeg_exports = {};
+__export(ffmpeg_exports, {
+  changedInstants: () => changedInstants,
+  extractFrames: () => extractFrames,
+  probe: () => probe,
+  run: () => run,
+  spread: () => spread,
+  toWav16k: () => toWav16k
+});
+import { spawn as spawn5 } from "node:child_process";
+import { mkdirSync as mkdirSync5, readdirSync as readdirSync2, rmSync as rmSync3, statSync } from "node:fs";
 import path5 from "node:path";
+function run(bin, args, label, timeoutMs = FFMPEG_TIMEOUT_MS) {
+  return new Promise((resolve2, reject) => {
+    let p;
+    try {
+      p = spawn5(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    } catch (e) {
+      reject(new Error(`${label}: ${e.message}`));
+      return;
+    }
+    let out = "";
+    let err = "";
+    const timer = setTimeout(() => p.kill("SIGKILL"), timeoutMs);
+    p.stdout.on("data", (d) => {
+      out += d.toString();
+      if (out.length > 8e6) out = out.slice(-4e6);
+    });
+    p.stderr.on("data", (d) => {
+      err += d.toString();
+      if (err.length > 8e6) err = err.slice(-4e6);
+    });
+    p.on("close", (c) => {
+      clearTimeout(timer);
+      if (c === 0) resolve2({ stdout: out, stderr: err });
+      else reject(new Error(`${label}: ${err.slice(-600) || `exit ${c}`}`));
+    });
+    p.on("error", (e) => {
+      clearTimeout(timer);
+      reject(new Error(`${label}: ${e.code === "ENOENT" ? `${bin} not found (install it or set its path)` : e.message}`));
+    });
+  });
+}
+async function probe(file3) {
+  const { stdout } = await run(config.ffprobe, ["-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", file3], "ffprobe");
+  const j = JSON.parse(stdout);
+  const types = new Set((j.streams ?? []).map((s) => s.codec_type));
+  return { duration: Number(j.format?.duration) || 0, hasVideo: types.has("video"), hasAudio: types.has("audio") };
+}
+async function toWav16k(input, out, from, length) {
+  mkdirSync5(path5.dirname(out), { recursive: true });
+  const cut = [...from != null ? ["-ss", from.toFixed(2)] : [], ...length != null ? ["-t", length.toFixed(2)] : []];
+  await run(config.ffmpeg, ["-hide_banner", "-nostats", "-y", ...cut, "-i", input, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", out], "audio");
+  return out;
+}
+async function changedInstants(video) {
+  const filter = [
+    `fps=1/${SAMPLE_EVERY_SEC}`,
+    "scale=320:-2",
+    // A block of 8x8 with mean difference > 48 per pixel, or 8% of blocks > 10.
+    `mpdecimate=hi=${64 * 48}:lo=${64 * 10}:frac=0.08`,
+    "showinfo"
+  ].join(",");
+  const { stderr } = await run(config.ffmpeg, ["-hide_banner", "-nostats", "-i", video, "-an", "-vf", filter, "-f", "null", "-"], "frames");
+  const dim = stderr.match(/Video:[^\n]*?\b(\d{2,5})x(\d{2,5})\b/);
+  const raw = [];
+  for (const m of stderr.matchAll(/\bn:\s*\d+\s+pts:\s*-?\d+\s+pts_time:(-?[\d.]+)/g)) {
+    const t = Number(m[1]);
+    if (Number.isFinite(t)) raw.push(t);
+  }
+  const t0 = raw.length ? raw[0] : 0;
+  return { times: raw.map((t) => Math.max(0, t - t0)), width: dim ? Number(dim[1]) : null, height: dim ? Number(dim[2]) : null };
+}
+function spread(list2, max) {
+  if (list2.length <= max) return list2;
+  if (max <= 1) return list2.slice(0, max);
+  const out = [];
+  for (let i = 0; i < max; i++) out.push(list2[Math.round(i * (list2.length - 1) / (max - 1))]);
+  return [...new Set(out)];
+}
+async function extractFrames(video, dir3, opts = {}) {
+  const found = await changedInstants(video);
+  const chosen = spread(found.times, opts.max ?? config.maxFrames);
+  rmSync3(dir3, { recursive: true, force: true });
+  mkdirSync5(dir3, { recursive: true });
+  const frames = [];
+  for (const t of chosen) {
+    const label = `F${frames.length + 1}`;
+    const file3 = path5.join(dir3, `${label}.jpg`);
+    try {
+      await run(config.ffmpeg, [
+        "-hide_banner",
+        "-nostats",
+        "-ss",
+        t.toFixed(2),
+        "-i",
+        video,
+        "-frames:v",
+        "1",
+        "-vf",
+        `scale='min(${FRAME_WIDTH},iw)':-2`,
+        "-q:v",
+        "4",
+        "-y",
+        file3
+      ], "frame");
+      if (statSync(file3).size > 0) frames.push({ label, t: Math.round((t + (opts.offset ?? 0)) * 10) / 10, file: file3 });
+    } catch {
+    }
+  }
+  const files = new Set(frames.map((f) => path5.basename(f.file)));
+  for (const f of readdirSync2(dir3)) if (!files.has(f)) rmSync3(path5.join(dir3, f), { force: true });
+  return frames;
+}
+var SAMPLE_EVERY_SEC, FRAME_WIDTH, FFMPEG_TIMEOUT_MS;
+var init_ffmpeg = __esm({
+  "src/media/ffmpeg.ts"() {
+    "use strict";
+    init_config();
+    SAMPLE_EVERY_SEC = 2;
+    FRAME_WIDTH = 1280;
+    FFMPEG_TIMEOUT_MS = 10 * 6e4;
+  }
+});
+
+// src/asr/index.ts
+import { existsSync as existsSync4, readFileSync as readFileSync5, rmSync as rmSync4 } from "node:fs";
+import path6 from "node:path";
+function dropNoise(segs) {
+  return segs.filter((s) => !(NOISE_TEXT.test(s.text) && (/^\s*[[(]/.test(s.text) || s.end - s.start > 6)));
+}
+async function transcribe(input, workDir, language) {
+  if (config.asr === "whisper-cpp") return dropNoise(await whisperCpp(input, workDir, language));
+  if (config.asr === "openai") return dropNoise(await openaiCompatible2(input, workDir, language));
+  throw new AsrError("No transcription configured. Set OMA_WHISPER_MODEL (whisper.cpp, local) or OMA_ASR_API_KEY / OPENAI_API_KEY (OpenAI-compatible API). meetily imports need none: they bring their own transcript.");
+}
+async function whisperCpp(input, workDir, language) {
+  if (!config.whisperModel || !existsSync4(config.whisperModel)) {
+    throw new AsrError(`whisper.cpp model not found: ${config.whisperModel ?? "(OMA_WHISPER_MODEL unset)"}`);
+  }
+  const wav2 = await toWav16k(input, path6.join(workDir, "asr.wav"));
+  const base2 = path6.join(workDir, "asr");
+  try {
+    await run(config.whisperBin, ["-m", config.whisperModel, "-f", wav2, "-l", language || "auto", "-oj", "-of", base2, "-np"], "whisper.cpp", 3 * 60 * 6e4);
+    const j = JSON.parse(readFileSync5(`${base2}.json`, "utf8"));
+    return (j.transcription ?? []).map((s) => ({ start: (s.offsets?.from ?? 0) / 1e3, end: (s.offsets?.to ?? 0) / 1e3, speaker: "Unknown", text: (s.text ?? "").trim() })).filter((s) => s.text);
+  } finally {
+    rmSync4(wav2, { force: true });
+    rmSync4(`${base2}.json`, { force: true });
+  }
+}
+async function openaiCompatible2(input, workDir, language) {
+  if (!config.asrApiKey && config.asrBaseUrl.includes("api.openai.com")) throw new AsrError("OMA_ASR_API_KEY or OPENAI_API_KEY is required.");
+  const { duration: duration3 } = await probe(input);
+  const out = [];
+  for (let from = 0; from < Math.max(duration3, 1); from += API_CHUNK_SEC) {
+    const len = Math.min(API_CHUNK_SEC, Math.max(duration3 - from, 1));
+    const wav2 = await toWav16k(input, path6.join(workDir, `asr-${from}.wav`), from, len);
+    try {
+      const form = new FormData();
+      form.append("file", new Blob([readFileSync5(wav2)], { type: "audio/wav" }), path6.basename(wav2));
+      form.append("model", config.asrModel);
+      form.append("response_format", "verbose_json");
+      form.append("temperature", "0");
+      if (language) form.append("language", language.slice(0, 2));
+      const r = await fetch(`${config.asrBaseUrl}/audio/transcriptions`, {
+        method: "POST",
+        headers: config.asrApiKey ? { authorization: `Bearer ${config.asrApiKey}` } : {},
+        body: form,
+        signal: AbortSignal.timeout(10 * 6e4)
+      });
+      const body2 = await r.text();
+      if (!r.ok) throw new AsrError(`transcription API: HTTP ${r.status} ${body2.slice(0, 300)}`);
+      const j = JSON.parse(body2);
+      if (j.segments?.length) {
+        for (const s of j.segments) {
+          const text2 = s.text.trim();
+          if (text2) out.push({ start: s.start + from, end: s.end + from, speaker: "Unknown", text: text2 });
+        }
+      } else if (j.text?.trim()) {
+        out.push({ start: from, end: from + len, speaker: "Unknown", text: j.text.trim() });
+      }
+    } finally {
+      rmSync4(wav2, { force: true });
+    }
+  }
+  return out;
+}
+var AsrError, NOISE_TEXT, API_CHUNK_SEC;
+var init_asr = __esm({
+  "src/asr/index.ts"() {
+    "use strict";
+    init_config();
+    init_ffmpeg();
+    AsrError = class extends Error {
+    };
+    NOISE_TEXT = /^(\s*[[(].*[\])]\s*|\s*(obrigad[oa]( a todos)?|thank you( for watching)?|thanks for watching|legendas pela comunidade amara\.org|subtitles by the amara\.org community|tchau|bye|you)[.!]?\s*)$/i;
+    API_CHUNK_SEC = 600;
+  }
+});
+
+// src/sources/huddle.ts
+import { appendFileSync as appendFileSync3, closeSync, existsSync as existsSync5, mkdirSync as mkdirSync6, openSync, readFileSync as readFileSync6, readSync, renameSync as renameSync2, rmSync as rmSync5, statSync as statSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import path7 from "node:path";
+function appendLive(id, e) {
+  appendFileSync3(file(id, "live.jsonl"), `${JSON.stringify({ at: Date.now(), ...e })}
+`);
+}
+function writeStatus(id, state2, extra = {}) {
+  writeJson(file(id, "status.json"), { state: state2, at: Date.now(), ...extra });
+}
+function initHuddle(id, speaker, transcribing) {
+  mkdirSync6(bot(id), { recursive: true });
+  writeMeta(id, { speaker, parts: [], speaking: [] });
+  writeStatus(id, "in_call");
+  appendLive(id, { type: "live", captions: transcribing, chat: true });
+}
+function huddleAlive(id) {
+  const st = readJson(file(id, "status.json"));
+  return !!st && st.state === "in_call" && Date.now() - (st.at ?? 0) < ALIVE_MS;
+}
+function huddleHasRecording(id) {
+  return (readMeta(id)?.parts ?? []).some((p) => p.bytes > 0);
+}
+function huddleScreen(id, maxAgeMs = 6e4) {
+  const f = file(id, "screen.jpg");
+  try {
+    return Date.now() - statSync2(f).mtimeMs < maxAgeMs ? f : null;
+  } catch {
+    return null;
+  }
+}
+function runtime(id) {
+  let rt = runtimes.get(id);
+  if (!rt) {
+    rt = { lastUpload: Date.now(), lastBeat: 0, busy: false, leaveAt: null, told: false, ending: null };
+    runtimes.set(id, rt);
+  }
+  return rt;
+}
+function active(id) {
+  const call = getCall(id);
+  if (!call || call.source !== "huddle") throw new HuddleError(404, "no such huddle");
+  const st = readJson(file(id, "status.json"));
+  if (call.status !== "in_call" || st?.state !== "in_call") throw new HuddleError(409, "the huddle is over");
+  const rt = runtime(id);
+  if (rt.ending) throw new HuddleError(409, "the huddle is ending");
+  rt.lastUpload = Date.now();
+  if (Date.now() - rt.lastBeat > 5e3) {
+    rt.lastBeat = Date.now();
+    writeStatus(id, "in_call");
+  }
+  return rt;
+}
+function addMedia(id, q, data) {
+  active(id);
+  if (!Number.isInteger(q.part) || q.part < 1 || q.part > 50) throw new HuddleError(400, "bad part");
+  const ext = /^(webm|mp4|ogg|mkv)$/.test(q.ext) ? q.ext : "webm";
+  const m = readMeta(id) ?? { speaker: "Me", parts: [], speaking: [] };
+  let p = m.parts.find((x) => x.part === q.part);
+  if (!p) {
+    p = { part: q.part, ext, started_ms: Number.isFinite(q.started) ? q.started : Date.now(), bytes: 0, next_seq: 0 };
+    m.parts.push(p);
+  }
+  if (q.seq < p.next_seq) return { next: p.next_seq };
+  if (q.seq > p.next_seq) throw new HuddleError(409, `expected piece ${p.next_seq}`);
+  appendFileSync3(file(id, `rec-${p.part}.${p.ext}`), data);
+  p.bytes += data.length;
+  p.next_seq++;
+  writeMeta(id, m);
+  return { next: p.next_seq };
+}
+function addAudio(id, data) {
+  active(id);
+  appendFileSync3(file(id, "live.pcm"), data.length % 2 ? data.subarray(0, data.length - 1) : data);
+}
+function setScreen(id, data) {
+  active(id);
+  const tmp = file(id, `screen.${process.pid}.tmp`);
+  writeFileSync3(tmp, data);
+  renameSync2(tmp, file(id, "screen.jpg"));
+}
+function askInHuddle(id, text2) {
+  active(id);
+  appendLive(id, { type: "chat", speaker: readMeta(id)?.speaker ?? "Me", text: text2.slice(0, 4e3) });
+}
+function markSpeaking(id, start, end) {
+  active(id);
+  if (!(end > start) || end - start > 10 * 6e4) return;
+  const m = readMeta(id);
+  if (!m) return;
+  m.speaking.push({ start_ms: start, end_ms: end });
+  writeMeta(id, m);
+}
+function endHuddle(id, reason, notify) {
+  const call = getCall(id);
+  if (!call || call.source !== "huddle") return Promise.reject(new HuddleError(404, "no such huddle"));
+  const rt = runtime(id);
+  rt.ending ??= (async () => {
+    try {
+      while (rt.busy) await new Promise((r) => setTimeout(r, 100));
+      if (call.status === "in_call" && existsSync5(bot(id))) {
+        await transcribeStep(id, rt, notify, true).catch((e) => logCall(id, `huddle: live transcript: ${e.message}`));
+        consumeCommands(id, notify);
+        const joined = Date.parse(call.joined_at ?? call.created_at);
+        writeJson(file(id, "exit.json"), { reason, inCallSec: Math.round((Date.now() - joined) / 1e3), sawOthers: false });
+        writeStatus(id, "done");
+        logCall(id, `huddle ended (${reason})`);
+      }
+    } finally {
+      runtimes.delete(id);
+      notify?.(id, { type: "ended", reason });
+    }
+  })();
+  return rt.ending;
+}
+function huddleTick(notify) {
+  for (const [id, rt] of runtimes) {
+    if (rt.ending) continue;
+    const call = getCall(id);
+    if (!call || call.status === "cancelled" || !existsSync5(bot(id))) {
+      runtimes.delete(id);
+      notify(id, { type: "leave", discard: true });
+      continue;
+    }
+    if (call.status !== "in_call") {
+      runtimes.delete(id);
+      continue;
+    }
+    consumeCommands(id, notify);
+    const control = readJson(file(id, "control.json"));
+    if (control?.leave) {
+      if (!rt.told) {
+        rt.told = true;
+        rt.leaveAt = Date.now();
+        notify(id, { type: "leave", discard: !!control.discard });
+      }
+      if (Date.now() - (rt.leaveAt ?? 0) > 15e3) {
+        void endHuddle(id, "manual", notify);
+        continue;
+      }
+    }
+    if (Date.now() - rt.lastUpload > IDLE_END_MS) {
+      void endHuddle(id, "disconnected", notify);
+      continue;
+    }
+    if (!rt.busy) {
+      rt.busy = true;
+      transcribeStep(id, rt, notify, false).catch((e) => logCall(id, `huddle: live transcript: ${e.message}`)).finally(() => {
+        rt.busy = false;
+      });
+    }
+  }
+}
+function watchHuddle(id) {
+  runtime(id);
+}
+function adoptHuddles() {
+  for (const c of listCalls()) if (c.source === "huddle" && c.status === "in_call") runtime(c.id);
+}
+function consumeCommands(id, notify) {
+  const cf = file(id, "commands.jsonl");
+  if (!existsSync5(cf)) return;
+  const sent = new Set(readLiveEvents(id).filter((e) => e.type === "sent").map((e) => e.id));
+  let raw;
+  try {
+    raw = readFileSync6(cf, "utf8");
+  } catch {
+    return;
+  }
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    let cmd;
+    try {
+      cmd = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!cmd.id || sent.has(cmd.id)) continue;
+    appendLive(id, { type: "sent", id: cmd.id, ok: true, text: cmd.text ?? "" });
+    sent.add(cmd.id);
+    notify?.(id, { type: "say", text: cmd.text ?? "" });
+  }
+}
+function findCut(samples, final) {
+  const frames = Math.floor(samples.length / FRAME);
+  if (!frames) return null;
+  const rms = [];
+  for (let f = 0; f < frames; f++) {
+    let s = 0;
+    for (let i = f * FRAME; i < (f + 1) * FRAME; i++) s += samples[i] * samples[i];
+    rms.push(Math.sqrt(s / FRAME));
+  }
+  const sorted = [...rms].sort((a, b) => a - b);
+  const floor = sorted[Math.floor(sorted.length * 0.1)] ?? 0;
+  const thresh = Math.min(1500, Math.max(400, floor * 3));
+  const voiced = rms.map((r) => r > thresh);
+  const first = voiced.indexOf(true);
+  const secs = frames * FRAME / RATE;
+  if (first < 0) {
+    if (final) return { from: 0, to: frames * FRAME, speech: false };
+    return secs >= 3 ? { from: 0, to: (frames - 25) * FRAME, speech: false } : null;
+  }
+  const voicedCount = voiced.filter(Boolean).length;
+  const from = Math.max(0, first - 15) * FRAME;
+  let run2 = 0;
+  for (let f = first + 1; f < frames; f++) {
+    run2 = voiced[f] ? 0 : run2 + 1;
+    if (run2 >= 35) {
+      const to = (f - run2 + 1 + 12) * FRAME;
+      return { from, to, speech: voicedCount >= 15 };
+    }
+  }
+  if (final || secs >= 20) return { from, to: frames * FRAME, speech: voicedCount >= 15 };
+  return null;
+}
+function readPcm(f, from, max) {
+  const size2 = statSync2(f).size;
+  const len = Math.min(size2 - from, max) & ~1;
+  if (len <= 0) return new Int16Array(0);
+  const buf = Buffer.alloc(len);
+  const fd = openSync(f, "r");
+  try {
+    readSync(fd, buf, 0, len, from);
+  } finally {
+    closeSync(fd);
+  }
+  return new Int16Array(buf.buffer, buf.byteOffset, len / 2);
+}
+function wav(samples) {
+  const data = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0);
+  h.writeUInt32LE(36 + data.length, 4);
+  h.write("WAVE", 8);
+  h.write("fmt ", 12);
+  h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20);
+  h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(RATE, 24);
+  h.writeUInt32LE(BYTES_PER_SEC, 28);
+  h.writeUInt16LE(2, 32);
+  h.writeUInt16LE(16, 34);
+  h.write("data", 36);
+  h.writeUInt32LE(data.length, 40);
+  return Buffer.concat([h, data]);
+}
+async function transcribeStep(id, _rt, notify, final) {
+  const pcm = file(id, "live.pcm");
+  if (config.asr === "none" || !existsSync5(pcm)) return;
+  const stateFile2 = file(id, "live-asr.json");
+  for (let round = 0; round < 6; round++) {
+    const st = readJson(stateFile2) ?? { offset: 0, seg: 0 };
+    const size2 = statSync2(pcm).size;
+    const pending = size2 - st.offset;
+    if (pending < (final ? FRAME * 2 * 10 : BYTES_PER_SEC * 1.2)) return;
+    const samples = readPcm(pcm, st.offset, 30 * BYTES_PER_SEC);
+    const cut = findCut(samples, final || pending > 30 * BYTES_PER_SEC);
+    if (!cut) return;
+    if (cut.speech) {
+      const dir3 = file(id, "live-asr");
+      mkdirSync6(dir3, { recursive: true });
+      const input = path7.join(dir3, "turn.wav");
+      writeFileSync3(input, wav(samples.subarray(cut.from, cut.to)));
+      try {
+        const call = getCall(id);
+        const segs = await transcribe(input, dir3, config.asrLanguage ?? call?.spoken_language ?? null);
+        const text2 = segs.map((s) => s.text.trim()).filter((t) => t && !NOISE_TEXT.test(t)).join(" ").trim();
+        if (text2) {
+          const at = Date.now() - Math.round(((size2 - st.offset) / 2 - cut.from) / RATE * 1e3);
+          appendLive(id, { type: "caption", seg: `h${st.seg + 1}`, speaker: readMeta(id)?.speaker ?? "Me", text: text2, final: true, at });
+          st.seg++;
+          notify?.(id, { type: "caption", text: text2 });
+        }
+      } finally {
+        rmSync5(input, { force: true });
+      }
+    }
+    st.offset += cut.to * 2;
+    if (!existsSync5(bot(id))) return;
+    writeJson(stateFile2, st);
+  }
+}
+async function huddleRecording(id, agentName) {
+  const m = readMeta(id);
+  const parts = (m?.parts ?? []).filter((p) => p.bytes > 0).sort((a, b) => a.part - b.part);
+  if (!m || !parts.length) return { media: null, hasVideo: false, timeline: null };
+  const ready = [];
+  for (const p of parts) {
+    const src = file(id, `rec-${p.part}.${p.ext}`);
+    const out = file(id, `part-${p.part}.mkv`);
+    try {
+      await run(config.ffmpeg, ["-hide_banner", "-nostats", "-y", "-i", src, "-c", "copy", out], "huddle remux");
+      const info = await probe(out);
+      ready.push({ file: out, started: p.started_ms, duration: info.duration, hasVideo: info.hasVideo });
+    } catch (e) {
+      logCall(id, `huddle: part ${p.part} unreadable: ${e.message.slice(0, 200)}`);
+    }
+  }
+  if (!ready.length) return { media: null, hasVideo: false, timeline: null };
+  let media = ready[0].file;
+  if (ready.length > 1) {
+    const list2 = file(id, "parts.txt");
+    writeFileSync3(list2, ready.map((r) => `file '${r.file.replace(/'/g, "'\\''")}'`).join("\n"));
+    const joined = file(id, "recording.mkv");
+    try {
+      await run(config.ffmpeg, ["-hide_banner", "-nostats", "-y", "-f", "concat", "-safe", "0", "-i", list2, "-c", "copy", joined], "huddle concat");
+      media = joined;
+    } catch (e) {
+      logCall(id, `huddle: parts not joined (${e.message.slice(0, 160)}): the longest one is used`);
+      media = [...ready].sort((a, b) => b.duration - a.duration)[0].file;
+      ready.splice(0, ready.length, ready.find((r) => r.file === media));
+    }
+  }
+  const entries = [];
+  let offset = 0;
+  for (const r of ready) {
+    const agent = m.speaking.filter((s) => s.end_ms > r.started && s.start_ms < r.started + r.duration * 1e3).map((s) => ({ start: Math.max(0, (s.start_ms - r.started) / 1e3), end: Math.min(r.duration, (s.end_ms - r.started) / 1e3) })).sort((a, b) => a.start - b.start);
+    let t = 0;
+    for (const a of agent) {
+      if (a.start > t) entries.push({ name: m.speaker, start: offset + t, end: offset + a.start });
+      entries.push({ name: agentName, start: offset + a.start, end: offset + a.end });
+      t = Math.max(t, a.end);
+    }
+    if (r.duration > t) entries.push({ name: m.speaker, start: offset + t, end: offset + r.duration });
+    offset += r.duration;
+  }
+  const timeline = file(id, "timeline.json");
+  writeJson(timeline, {
+    transcriptEntries: entries.map((e) => ({ participant: { displayName: e.name }, startTime: `${e.start.toFixed(3)}s`, endTime: `${e.end.toFixed(3)}s` }))
+  });
+  return { media, hasVideo: ready.some((r) => r.hasVideo), timeline };
+}
+var RATE, BYTES_PER_SEC, FRAME, IDLE_END_MS, ALIVE_MS, bot, file, readMeta, writeMeta, HuddleError, runtimes;
+var init_huddle = __esm({
+  "src/sources/huddle.ts"() {
+    "use strict";
+    init_asr();
+    init_config();
+    init_ffmpeg();
+    init_store();
+    init_bot();
+    RATE = 16e3;
+    BYTES_PER_SEC = RATE * 2;
+    FRAME = 320;
+    IDLE_END_MS = 3 * 6e4;
+    ALIVE_MS = 4 * 6e4;
+    bot = (id) => callPaths(id).bot;
+    file = (id, name) => path7.join(bot(id), name);
+    readMeta = (id) => readJson(file(id, "huddle.json"));
+    writeMeta = (id, m) => writeJson(file(id, "huddle.json"), m);
+    HuddleError = class extends Error {
+      constructor(status, message) {
+        super(message);
+        this.status = status;
+      }
+    };
+    runtimes = /* @__PURE__ */ new Map();
+  }
+});
+
+// src/live.ts
+import path8 from "node:path";
 function readLive(callId, agentName) {
   const view = { lines: [], speaking: [], captions: null, chat: null, failed: [] };
   const open = /* @__PURE__ */ new Map();
@@ -1953,12 +2516,28 @@ function readLive(callId, agentName) {
   view.speaking = [...open.values()];
   return view;
 }
+function nearWord(a, b) {
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 4 || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+}
 function mentionsAgent(text2, names) {
-  const t = ` ${fold(text2)} `;
+  const words = fold(text2).split(" ").filter(Boolean);
   return names.some((n) => {
-    const f = fold(n);
-    return f.length >= 3 && t.includes(` ${f} `);
+    const want = fold(n).split(" ").filter(Boolean);
+    if (!want.length || want.join(" ").length < 3) return false;
+    for (let i = 0; i + want.length <= words.length; i++) {
+      if (want.every((w, k) => want.length > 1 ? nearWord(words[i + k], w) : words[i + k] === w)) return true;
+    }
+    return false;
   });
+}
+function addressesAgent(call, line, names = agentNames(call)) {
+  if (line.kind === "agent") return false;
+  return call.source === "huddle" && line.kind === "chat" || mentionsAgent(line.text, names);
 }
 function liveLineText(call, l) {
   const start = Date.parse(call.joined_at ?? call.created_at);
@@ -1981,7 +2560,7 @@ function greetingText(call) {
 }
 async function sayInMeeting(callId, text2, waitMs = 0) {
   const call = mustGetCall(callId);
-  if (call.source !== "bot" || !["joining", "in_call"].includes(call.status)) throw new Error(`The agent is not in the meeting (call ${call.status}).`);
+  if (!isLiveSource(call) || !["joining", "in_call"].includes(call.status)) throw new Error(`The agent is not in the meeting (call ${call.status}).`);
   const id = sendBotCommand(callId, text2.trim().slice(0, 2e3));
   logCall(callId, `live: said "${text2.slice(0, 120)}"`);
   const until = Date.now() + waitMs;
@@ -2009,7 +2588,7 @@ async function watchMeeting(callId, since = 0, waitSec = 25) {
     const lines = view.lines.filter((l) => l.seq > since);
     if (lines.length || !["joining", "in_call"].includes(call.status) || Date.now() >= until) {
       const names = agentNames(call);
-      return { call, view, lines, mentions: lines.filter((l) => l.kind !== "agent" && mentionsAgent(l.text, names)) };
+      return { call, view, lines, mentions: lines.filter((l) => addressesAgent(call, l, names)) };
     }
     await sleep(1e3);
   }
@@ -2022,7 +2601,7 @@ async function liveStep(callId) {
   if (!st.greeted && view.captions !== null) {
     st.greeted = true;
     writeJson(stateFile(callId), st);
-    const hello = greetingText(call);
+    const hello = call.source === "huddle" ? null : greetingText(call);
     if (hello) await sayInMeeting(callId, hello).catch(() => {
     });
   }
@@ -2031,7 +2610,7 @@ async function liveStep(callId) {
   for (let i = 0; i < view.lines.length; i++) {
     const line = view.lines[i];
     if (line.seq <= st.handled) continue;
-    if (line.kind === "agent" || !mentionsAgent(line.text, names)) {
+    if (!addressesAgent(call, line, names)) {
       st.handled = line.seq;
       continue;
     }
@@ -2064,7 +2643,8 @@ async function answer(call, view, request) {
 }
 function livePrompt(call) {
   const target2 = liveTaskTarget(call);
-  return `You are "${call.agent_name}", an AI assistant taking part in a live meeting ("${call.title}") through its chat. You read the meeting's live captions and chat. Someone just addressed you.
+  const where = call.source === "huddle" ? `in a huddle with ${readMeta(call.id)?.speaker ?? "the person"} in the open-meeting-agent web UI ("${call.title}"): they share their screen and talk to you. You read the live transcript of what they say (and what they type), and you see their screen as it is now when the image is attached. Your reply is shown to them and read aloud, so write it to be heard (no markdown, no long links). They just addressed you.` : `taking part in a live meeting ("${call.title}") through its chat. You read the meeting's live captions and chat. Someone just addressed you.`;
+  return `You are "${call.agent_name}", an AI assistant ${where}
 
 Decide what to do, and answer ONLY with JSON: {"reply":"\u2026","note":null,"task":null}
 - "reply": your chat message, in ${languageName(call.language)}: 1 to 3 short sentences (at most 400 characters), friendly and to the point. Always reply. Answer from what was said in the meeting; when asked to do something, say what you will do; when something is missing, ask for it. Never make up facts nobody said.
@@ -2090,7 +2670,11 @@ ${done}
     `<addressed_by>${who}</addressed_by>
 <request>${text2}</request>`
   ].filter(Boolean).join("\n\n");
-  const r = await chat(livePrompt(call), [{ role: "user", content: user }], { maxTokens: 1200, timeoutMs: 6e4 });
+  const screen = call.source === "huddle" ? huddleScreen(call.id) : null;
+  const content = screen ? [{ type: "text", text: `${user}
+
+<screen>The person's shared screen right now:</screen>` }, { type: "image", label: "screen", file: screen }] : user;
+  const r = await chat(livePrompt(call), [{ role: "user", content }], { maxTokens: 1200, timeoutMs: 9e4 });
   const j = parseJsonObject(r.text) ?? {};
   const str3 = (x, max) => typeof x === "string" ? x.trim().slice(0, max) : "";
   const reply = str3(j.reply, 600);
@@ -2127,6 +2711,7 @@ var init_live = __esm({
     init_normalize();
     init_prompt();
     init_bot();
+    init_huddle();
     init_store();
     fold = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     agentNames = (call) => [call.agent_name, ...config.liveNames];
@@ -2145,8 +2730,8 @@ var init_live = __esm({
       }
     };
     texts = (lang) => TEXTS[lang.toLowerCase().slice(0, 2)] ?? TEXTS.en;
-    watchFile = (callId) => path5.join(callPaths(callId).dir, "live-watch.json");
-    stateFile = (callId) => path5.join(callPaths(callId).dir, "live-state.json");
+    watchFile = (callId) => path8.join(callPaths(callId).dir, "live-watch.json");
+    stateFile = (callId) => path8.join(callPaths(callId).dir, "live-state.json");
     sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 });
@@ -2563,8 +3148,8 @@ var init_parseUtil = __esm({
     init_errors();
     init_en();
     makeIssue = (params) => {
-      const { data, path: path14, errorMaps, issueData } = params;
-      const fullPath = [...path14, ...issueData.path || []];
+      const { data, path: path15, errorMaps, issueData } = params;
+      const fullPath = [...path15, ...issueData.path || []];
       const fullIssue = {
         ...issueData,
         path: fullPath
@@ -2872,11 +3457,11 @@ var init_types = __esm({
     init_parseUtil();
     init_util();
     ParseInputLazyPath = class {
-      constructor(parent, value, path14, key) {
+      constructor(parent, value, path15, key) {
         this._cachedPath = [];
         this.parent = parent;
         this.data = value;
-        this._path = path14;
+        this._path = path15;
         this._key = key;
       }
       get path() {
@@ -6457,10 +7042,10 @@ function assignProp(target2, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj2, path14) {
-  if (!path14)
+function getElementAtPath(obj2, path15) {
+  if (!path15)
     return obj2;
-  return path14.reduce((acc, key) => acc?.[key], obj2);
+  return path15.reduce((acc, key) => acc?.[key], obj2);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -6709,11 +7294,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path14, issues) {
+function prefixIssues(path15, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path14);
+    iss.path.unshift(path15);
     return iss;
   });
 }
@@ -9862,28 +10447,28 @@ var init_to_json_schema = __esm({
               }
               case "file": {
                 const json2 = _json;
-                const file2 = {
+                const file3 = {
                   type: "string",
                   format: "binary",
                   contentEncoding: "binary"
                 };
                 const { minimum, maximum, mime } = schema._zod.bag;
                 if (minimum !== void 0)
-                  file2.minLength = minimum;
+                  file3.minLength = minimum;
                 if (maximum !== void 0)
-                  file2.maxLength = maximum;
+                  file3.maxLength = maximum;
                 if (mime) {
                   if (mime.length === 1) {
-                    file2.contentMediaType = mime[0];
-                    Object.assign(json2, file2);
+                    file3.contentMediaType = mime[0];
+                    Object.assign(json2, file3);
                   } else {
                     json2.anyOf = mime.map((m) => {
-                      const mFile = { ...file2, contentMediaType: m };
+                      const mFile = { ...file3, contentMediaType: m };
                       return mFile;
                     });
                   }
                 } else {
-                  Object.assign(json2, file2);
+                  Object.assign(json2, file3);
                 }
                 break;
               }
@@ -10377,11 +10962,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path14) {
-  if (path14.length === 0) {
+function getDotPath(path15) {
+  if (path15.length === 0) {
     return "object root";
   }
-  return path14.reduce((acc, seg, index) => {
+  return path15.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -18615,8 +19200,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path14) {
-      let input = path14;
+    function removeDotSegments(path15) {
+      let input = path15;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -18690,11 +19275,11 @@ var require_utils = __commonJS({
       }
       return output.join("");
     }
-    function removeDotSegmentsRelative(path14) {
-      if (path14 === "" || path14[0] === "/") {
-        return removeDotSegments(path14);
+    function removeDotSegmentsRelative(path15) {
+      if (path15 === "" || path15[0] === "/") {
+        return removeDotSegments(path15);
       }
-      const segments = path14.split("/");
+      const segments = path15.split("/");
       const last = segments.length - 1;
       const output = [];
       let trailingDirectory = false;
@@ -19057,8 +19642,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path14 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path14 && path14 !== "/" ? path14 : void 0;
+        const path15 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path15 && path15 !== "/" ? path15 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -24408,132 +24993,6 @@ var init_stdio2 = __esm({
   }
 });
 
-// src/media/ffmpeg.ts
-var ffmpeg_exports = {};
-__export(ffmpeg_exports, {
-  changedInstants: () => changedInstants,
-  extractFrames: () => extractFrames,
-  probe: () => probe,
-  run: () => run,
-  spread: () => spread,
-  toWav16k: () => toWav16k
-});
-import { spawn as spawn5 } from "node:child_process";
-import { mkdirSync as mkdirSync5, readdirSync as readdirSync2, rmSync as rmSync3, statSync } from "node:fs";
-import path6 from "node:path";
-function run(bin, args, label, timeoutMs = FFMPEG_TIMEOUT_MS) {
-  return new Promise((resolve2, reject) => {
-    let p;
-    try {
-      p = spawn5(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
-    } catch (e) {
-      reject(new Error(`${label}: ${e.message}`));
-      return;
-    }
-    let out = "";
-    let err = "";
-    const timer = setTimeout(() => p.kill("SIGKILL"), timeoutMs);
-    p.stdout.on("data", (d) => {
-      out += d.toString();
-      if (out.length > 8e6) out = out.slice(-4e6);
-    });
-    p.stderr.on("data", (d) => {
-      err += d.toString();
-      if (err.length > 8e6) err = err.slice(-4e6);
-    });
-    p.on("close", (c) => {
-      clearTimeout(timer);
-      if (c === 0) resolve2({ stdout: out, stderr: err });
-      else reject(new Error(`${label}: ${err.slice(-600) || `exit ${c}`}`));
-    });
-    p.on("error", (e) => {
-      clearTimeout(timer);
-      reject(new Error(`${label}: ${e.code === "ENOENT" ? `${bin} not found (install it or set its path)` : e.message}`));
-    });
-  });
-}
-async function probe(file2) {
-  const { stdout } = await run(config.ffprobe, ["-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", file2], "ffprobe");
-  const j = JSON.parse(stdout);
-  const types = new Set((j.streams ?? []).map((s) => s.codec_type));
-  return { duration: Number(j.format?.duration) || 0, hasVideo: types.has("video"), hasAudio: types.has("audio") };
-}
-async function toWav16k(input, out, from, length) {
-  mkdirSync5(path6.dirname(out), { recursive: true });
-  const cut = [...from != null ? ["-ss", from.toFixed(2)] : [], ...length != null ? ["-t", length.toFixed(2)] : []];
-  await run(config.ffmpeg, ["-hide_banner", "-nostats", "-y", ...cut, "-i", input, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", out], "audio");
-  return out;
-}
-async function changedInstants(video) {
-  const filter = [
-    `fps=1/${SAMPLE_EVERY_SEC}`,
-    "scale=320:-2",
-    // A block of 8x8 with mean difference > 48 per pixel, or 8% of blocks > 10.
-    `mpdecimate=hi=${64 * 48}:lo=${64 * 10}:frac=0.08`,
-    "showinfo"
-  ].join(",");
-  const { stderr } = await run(config.ffmpeg, ["-hide_banner", "-nostats", "-i", video, "-an", "-vf", filter, "-f", "null", "-"], "frames");
-  const dim = stderr.match(/Video:[^\n]*?\b(\d{2,5})x(\d{2,5})\b/);
-  const raw = [];
-  for (const m of stderr.matchAll(/\bn:\s*\d+\s+pts:\s*-?\d+\s+pts_time:(-?[\d.]+)/g)) {
-    const t = Number(m[1]);
-    if (Number.isFinite(t)) raw.push(t);
-  }
-  const t0 = raw.length ? raw[0] : 0;
-  return { times: raw.map((t) => Math.max(0, t - t0)), width: dim ? Number(dim[1]) : null, height: dim ? Number(dim[2]) : null };
-}
-function spread(list2, max) {
-  if (list2.length <= max) return list2;
-  if (max <= 1) return list2.slice(0, max);
-  const out = [];
-  for (let i = 0; i < max; i++) out.push(list2[Math.round(i * (list2.length - 1) / (max - 1))]);
-  return [...new Set(out)];
-}
-async function extractFrames(video, dir3, opts = {}) {
-  const found = await changedInstants(video);
-  const chosen = spread(found.times, opts.max ?? config.maxFrames);
-  rmSync3(dir3, { recursive: true, force: true });
-  mkdirSync5(dir3, { recursive: true });
-  const frames = [];
-  for (const t of chosen) {
-    const label = `F${frames.length + 1}`;
-    const file2 = path6.join(dir3, `${label}.jpg`);
-    try {
-      await run(config.ffmpeg, [
-        "-hide_banner",
-        "-nostats",
-        "-ss",
-        t.toFixed(2),
-        "-i",
-        video,
-        "-frames:v",
-        "1",
-        "-vf",
-        `scale='min(${FRAME_WIDTH},iw)':-2`,
-        "-q:v",
-        "4",
-        "-y",
-        file2
-      ], "frame");
-      if (statSync(file2).size > 0) frames.push({ label, t: Math.round((t + (opts.offset ?? 0)) * 10) / 10, file: file2 });
-    } catch {
-    }
-  }
-  const files = new Set(frames.map((f) => path6.basename(f.file)));
-  for (const f of readdirSync2(dir3)) if (!files.has(f)) rmSync3(path6.join(dir3, f), { force: true });
-  return frames;
-}
-var SAMPLE_EVERY_SEC, FRAME_WIDTH, FFMPEG_TIMEOUT_MS;
-var init_ffmpeg = __esm({
-  "src/media/ffmpeg.ts"() {
-    "use strict";
-    init_config();
-    SAMPLE_EVERY_SEC = 2;
-    FRAME_WIDTH = 1280;
-    FFMPEG_TIMEOUT_MS = 10 * 6e4;
-  }
-});
-
 // src/asr/align.ts
 function parseTimeline(raw) {
   if (!raw) return [];
@@ -24566,86 +25025,14 @@ var init_align = __esm({
   }
 });
 
-// src/asr/index.ts
-import { existsSync as existsSync4, readFileSync as readFileSync5, rmSync as rmSync4 } from "node:fs";
-import path7 from "node:path";
-async function transcribe(input, workDir, language) {
-  if (config.asr === "whisper-cpp") return whisperCpp(input, workDir, language);
-  if (config.asr === "openai") return openaiCompatible2(input, workDir, language);
-  throw new AsrError("No transcription configured. Set OMA_WHISPER_MODEL (whisper.cpp, local) or OMA_ASR_API_KEY / OPENAI_API_KEY (OpenAI-compatible API). meetily imports need none: they bring their own transcript.");
-}
-async function whisperCpp(input, workDir, language) {
-  if (!config.whisperModel || !existsSync4(config.whisperModel)) {
-    throw new AsrError(`whisper.cpp model not found: ${config.whisperModel ?? "(OMA_WHISPER_MODEL unset)"}`);
-  }
-  const wav = await toWav16k(input, path7.join(workDir, "asr.wav"));
-  const base2 = path7.join(workDir, "asr");
-  try {
-    await run(config.whisperBin, ["-m", config.whisperModel, "-f", wav, "-l", language || "auto", "-oj", "-of", base2, "-np"], "whisper.cpp", 3 * 60 * 6e4);
-    const j = JSON.parse(readFileSync5(`${base2}.json`, "utf8"));
-    return (j.transcription ?? []).map((s) => ({ start: (s.offsets?.from ?? 0) / 1e3, end: (s.offsets?.to ?? 0) / 1e3, speaker: "Unknown", text: (s.text ?? "").trim() })).filter((s) => s.text);
-  } finally {
-    rmSync4(wav, { force: true });
-    rmSync4(`${base2}.json`, { force: true });
-  }
-}
-async function openaiCompatible2(input, workDir, language) {
-  if (!config.asrApiKey && config.asrBaseUrl.includes("api.openai.com")) throw new AsrError("OMA_ASR_API_KEY or OPENAI_API_KEY is required.");
-  const { duration: duration3 } = await probe(input);
-  const out = [];
-  for (let from = 0; from < Math.max(duration3, 1); from += API_CHUNK_SEC) {
-    const len = Math.min(API_CHUNK_SEC, Math.max(duration3 - from, 1));
-    const wav = await toWav16k(input, path7.join(workDir, `asr-${from}.wav`), from, len);
-    try {
-      const form = new FormData();
-      form.append("file", new Blob([readFileSync5(wav)], { type: "audio/wav" }), path7.basename(wav));
-      form.append("model", config.asrModel);
-      form.append("response_format", "verbose_json");
-      form.append("temperature", "0");
-      if (language) form.append("language", language.slice(0, 2));
-      const r = await fetch(`${config.asrBaseUrl}/audio/transcriptions`, {
-        method: "POST",
-        headers: config.asrApiKey ? { authorization: `Bearer ${config.asrApiKey}` } : {},
-        body: form,
-        signal: AbortSignal.timeout(10 * 6e4)
-      });
-      const body2 = await r.text();
-      if (!r.ok) throw new AsrError(`transcription API: HTTP ${r.status} ${body2.slice(0, 300)}`);
-      const j = JSON.parse(body2);
-      if (j.segments?.length) {
-        for (const s of j.segments) {
-          const text2 = s.text.trim();
-          if (text2) out.push({ start: s.start + from, end: s.end + from, speaker: "Unknown", text: text2 });
-        }
-      } else if (j.text?.trim()) {
-        out.push({ start: from, end: from + len, speaker: "Unknown", text: j.text.trim() });
-      }
-    } finally {
-      rmSync4(wav, { force: true });
-    }
-  }
-  return out;
-}
-var AsrError, API_CHUNK_SEC;
-var init_asr = __esm({
-  "src/asr/index.ts"() {
-    "use strict";
-    init_config();
-    init_ffmpeg();
-    AsrError = class extends Error {
-    };
-    API_CHUNK_SEC = 600;
-  }
-});
-
 // src/plan/build.ts
-import { existsSync as existsSync5, readFileSync as readFileSync6 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync7 } from "node:fs";
 function planWants(call) {
   const o = outputsOf(call);
   let template = null;
-  if (o.doc && config.docTemplate && existsSync5(config.docTemplate)) {
+  if (o.doc && config.docTemplate && existsSync6(config.docTemplate)) {
     try {
-      template = readFileSync6(config.docTemplate, "utf8").slice(0, 6e3);
+      template = readFileSync7(config.docTemplate, "utf8").slice(0, 6e3);
     } catch {
     }
   }
@@ -24722,12 +25109,12 @@ var init_build = __esm({
 });
 
 // src/sources/meetily.ts
-import { existsSync as existsSync6, readdirSync as readdirSync3 } from "node:fs";
-import path8 from "node:path";
-async function openDb(file2) {
-  if (!existsSync6(file2)) throw new Error(`meetily database not found at ${file2} (set OMA_MEETILY_DB)`);
+import { existsSync as existsSync7, readdirSync as readdirSync3 } from "node:fs";
+import path9 from "node:path";
+async function openDb(file3) {
+  if (!existsSync7(file3)) throw new Error(`meetily database not found at ${file3} (set OMA_MEETILY_DB)`);
   const { DatabaseSync } = await import("node:sqlite");
-  return new DatabaseSync(file2, { readOnly: true });
+  return new DatabaseSync(file3, { readOnly: true });
 }
 function hasColumn(db, table, col) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some((r) => r.name === col);
@@ -24793,11 +25180,11 @@ async function readMeetilyMeeting(id, dbFile = config.meetilyDb) {
   }
 }
 function findAudio(folder) {
-  if (!folder || !existsSync6(folder)) return null;
-  const direct = path8.join(folder, "audio.mp4");
-  if (existsSync6(direct)) return direct;
+  if (!folder || !existsSync7(folder)) return null;
+  const direct = path9.join(folder, "audio.mp4");
+  if (existsSync7(direct)) return direct;
   const any = readdirSync3(folder).find((f) => /\.(mp4|m4a|wav|mp3|webm)$/i.test(f));
-  return any ? path8.join(folder, any) : null;
+  return any ? path9.join(folder, any) : null;
 }
 var init_meetily = __esm({
   "src/sources/meetily.ts"() {
@@ -24808,8 +25195,8 @@ var init_meetily = __esm({
 
 // src/sources/screen.ts
 import { spawn as spawn6 } from "node:child_process";
-import { existsSync as existsSync7, mkdirSync as mkdirSync6, openSync, readdirSync as readdirSync4, statSync as statSync2 } from "node:fs";
-import path9 from "node:path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync7, openSync as openSync2, readdirSync as readdirSync4, statSync as statSync3 } from "node:fs";
+import path10 from "node:path";
 function inputArgs() {
   const dev = process.env.OMA_SCREEN_DEVICE;
   if (process.platform === "darwin") return ["-f", "avfoundation", "-capture_cursor", "1", "-framerate", "10", "-i", `${dev || "Capture screen 0"}:none`];
@@ -24829,10 +25216,10 @@ function screenStatus() {
 function startScreenCapture() {
   const running2 = screenStatus();
   if (running2) return running2;
-  mkdirSync6(dir(), { recursive: true });
+  mkdirSync7(dir(), { recursive: true });
   const started = /* @__PURE__ */ new Date();
-  const file2 = path9.join(dir(), `screen-${started.toISOString().replace(/[:.]/g, "-")}.mp4`);
-  const log = openSync(`${file2}.log`, "a");
+  const file3 = path10.join(dir(), `screen-${started.toISOString().replace(/[:.]/g, "-")}.mp4`);
+  const log = openSync2(`${file3}.log`, "a");
   const p = spawn6(config.ffmpeg, [
     "-hide_banner",
     "-nostats",
@@ -24850,12 +25237,12 @@ function startScreenCapture() {
     "30",
     "-pix_fmt",
     "yuv420p",
-    file2
+    file3
   ], { detached: true, stdio: ["ignore", "ignore", log] });
   p.unref();
-  const rec = { file: file2, started_at: started.toISOString(), ended_at: null, pid: p.pid };
+  const rec = { file: file3, started_at: started.toISOString(), ended_at: null, pid: p.pid };
   writeJson(current(), rec);
-  writeJson(`${file2}.json`, rec);
+  writeJson(`${file3}.json`, rec);
   return rec;
 }
 async function stopScreenCapture() {
@@ -24879,13 +25266,13 @@ async function stopScreenCapture() {
   return done;
 }
 function findScreenRecording(fromIso, toIso) {
-  if (!existsSync7(dir())) return null;
+  if (!existsSync8(dir())) return null;
   const from = Date.parse(fromIso);
   const to = toIso ? Date.parse(toIso) : from + 3 * 36e5;
   let best = null;
   for (const f of readdirSync4(dir()).filter((x) => x.endsWith(".mp4.json"))) {
-    const rec = readJson(path9.join(dir(), f));
-    if (!rec || !existsSync7(rec.file) || statSync2(rec.file).size < 1024) continue;
+    const rec = readJson(path10.join(dir(), f));
+    if (!rec || !existsSync8(rec.file) || statSync3(rec.file).size < 1024) continue;
     const s = Date.parse(rec.started_at);
     const e = rec.ended_at ? Date.parse(rec.ended_at) : Date.now();
     const ovl = Math.min(e, to) - Math.max(s, from);
@@ -24899,26 +25286,26 @@ var init_screen = __esm({
     "use strict";
     init_config();
     init_store();
-    dir = () => path9.join(config.home, "screen");
-    current = () => path9.join(dir(), "current.json");
+    dir = () => path10.join(config.home, "screen");
+    current = () => path10.join(dir(), "current.json");
   }
 });
 
 // src/pipeline.ts
 import { spawn as spawn7 } from "node:child_process";
-import { copyFileSync, existsSync as existsSync8, mkdirSync as mkdirSync7, openSync as openSync2, readdirSync as readdirSync5, readFileSync as readFileSync7, rmSync as rmSync5 } from "node:fs";
-import path10 from "node:path";
+import { copyFileSync, existsSync as existsSync9, mkdirSync as mkdirSync8, openSync as openSync3, readdirSync as readdirSync5, readFileSync as readFileSync8, rmSync as rmSync6 } from "node:fs";
+import path11 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function cliEntry() {
   const self = fileURLToPath2(import.meta.url);
-  if (process.env.OMA_CLI_PATH) return { args: [process.env.OMA_CLI_PATH], cwd: path10.dirname(process.env.OMA_CLI_PATH) };
-  if (self.endsWith(".mjs") || self.endsWith(".js")) return { args: [self], cwd: path10.dirname(self) };
-  const root = path10.resolve(path10.dirname(self), "..");
-  return { args: ["--import", "tsx", path10.join(path10.dirname(self), "cli.ts")], cwd: root };
+  if (process.env.OMA_CLI_PATH) return { args: [process.env.OMA_CLI_PATH], cwd: path11.dirname(process.env.OMA_CLI_PATH) };
+  if (self.endsWith(".mjs") || self.endsWith(".js")) return { args: [self], cwd: path11.dirname(self) };
+  const root = path11.resolve(path11.dirname(self), "..");
+  return { args: ["--import", "tsx", path11.join(path11.dirname(self), "cli.ts")], cwd: root };
 }
 function spawnWorker(callId) {
   const { args, cwd } = cliEntry();
-  const out = openSync2(path10.join(callPaths(callId).dir, "worker.log"), "a");
+  const out = openSync3(path11.join(callPaths(callId).dir, "worker.log"), "a");
   const p = spawn7(process.execPath, ["--no-warnings", ...args, "worker", callId], {
     cwd,
     detached: true,
@@ -24948,14 +25335,28 @@ async function joinMeeting(url, o = {}) {
   spawnWorker(call.id);
   return mustGetCall(call.id);
 }
-async function importRecording(file2, o = {}) {
-  const abs = path10.resolve(file2);
-  if (!existsSync8(abs)) throw new Error(`file not found: ${abs}`);
+function startHuddle(o = {}) {
+  const call = createCall({
+    ...base(o),
+    act: o.act ?? "both",
+    title: o.title ?? `Huddle ${(/* @__PURE__ */ new Date()).toLocaleString()}`,
+    source: "huddle",
+    status: "in_call",
+    joined_at: (/* @__PURE__ */ new Date()).toISOString(),
+    spoken_language: o.spokenLanguage ?? null
+  });
+  initHuddle(call.id, o.speaker?.trim().slice(0, 60) || "Me", config.asr !== "none");
+  spawnWorker(call.id);
+  return call;
+}
+async function importRecording(file3, o = {}) {
+  const abs = path11.resolve(file3);
+  if (!existsSync9(abs)) throw new Error(`file not found: ${abs}`);
   await probe(abs);
-  const call = createCall({ ...base(o), act: "after", title: o.title ?? path10.basename(abs), source: "file", status: "processing" });
+  const call = createCall({ ...base(o), act: "after", title: o.title ?? path11.basename(abs), source: "file", status: "processing" });
   const media = callPaths(call.id).media;
-  mkdirSync7(media, { recursive: true });
-  copyFileSync(abs, path10.join(media, `input${path10.extname(abs) || ".bin"}`));
+  mkdirSync8(media, { recursive: true });
+  copyFileSync(abs, path11.join(media, `input${path11.extname(abs) || ".bin"}`));
   spawnWorker(call.id);
   return call;
 }
@@ -24973,14 +25374,14 @@ async function importMeetily(meetingId, o = {}) {
   if (m.notes?.trim()) updateCall(call.id, { notes: [{ at: (/* @__PURE__ */ new Date()).toISOString(), text: `Notes taken during the meeting:
 ${m.notes.trim()}` }] });
   const media = callPaths(call.id).media;
-  mkdirSync7(media, { recursive: true });
-  if (m.audio) copyFileSync(m.audio, path10.join(media, `input${path10.extname(m.audio)}`));
+  mkdirSync8(media, { recursive: true });
+  if (m.audio) copyFileSync(m.audio, path11.join(media, `input${path11.extname(m.audio)}`));
   const last = m.segments.at(-1)?.end ?? 0;
   const startIso = m.meeting.created_at;
   const endIso = Number.isFinite(Date.parse(startIso)) ? new Date(Date.parse(startIso) + Math.max(last, 60) * 1e3).toISOString() : null;
   const screen = Number.isFinite(Date.parse(startIso)) ? findScreenRecording(startIso, endIso) : null;
   if (screen) {
-    copyFileSync(screen.file, path10.join(media, "screen.mp4"));
+    copyFileSync(screen.file, path11.join(media, "screen.mp4"));
     writeOffset(call.id, screen.offset);
   }
   spawnWorker(call.id);
@@ -24991,7 +25392,7 @@ function writeOffset(callId, offset) {
 }
 async function endMeeting(callId) {
   const call = mustGetCall(callId);
-  if (call.source !== "bot") throw new Error("Only a call the bot joined can be ended.");
+  if (!isLiveSource(call)) throw new Error("Only a meeting the agent is in (the bot, or a huddle) can be ended.");
   if (!["joining", "in_call"].includes(call.status)) throw new Error(`The call is ${call.status}, not in the meeting.`);
   requestLeave(callId);
   logCall(callId, "leave requested");
@@ -25000,10 +25401,15 @@ async function endMeeting(callId) {
 }
 async function cancelMeeting(callId) {
   const call = mustGetCall(callId);
+  if (call.source === "huddle") {
+    const done = updateCall(callId, { status: "cancelled", ended_at: (/* @__PURE__ */ new Date()).toISOString() });
+    rmSync6(callPaths(callId).bot, { recursive: true, force: true });
+    return done;
+  }
   if (call.source === "bot") {
     requestLeave(callId, true);
     await killBot(callId);
-    rmSync5(callPaths(callId).bot, { recursive: true, force: true });
+    rmSync6(callPaths(callId).bot, { recursive: true, force: true });
   }
   return updateCall(callId, { status: "cancelled", ended_at: (/* @__PURE__ */ new Date()).toISOString() });
 }
@@ -25012,7 +25418,7 @@ async function runWorker(callId) {
   try {
     let call = mustGetCall(callId);
     if (call.status === "cancelled") return;
-    if (call.source === "bot" && ["joining", "in_call"].includes(call.status)) {
+    if (isLiveSource(call) && ["joining", "in_call"].includes(call.status)) {
       call = await followBot(callId);
       if (call.status !== "processing") return;
     }
@@ -25046,11 +25452,16 @@ async function followBot(callId) {
       const out = botOutputs(callId);
       return updateCall(callId, { status: "processing", ended_at: (/* @__PURE__ */ new Date()).toISOString(), exit: out.exit });
     }
-    if (!await containerRunning(callId)) {
+    const huddle = call.source === "huddle";
+    if (!(huddle ? huddleAlive(callId) : await containerRunning(callId))) {
       if (++gone >= 3) {
         const out = botOutputs(callId);
-        if (out.audio || out.video) return updateCall(callId, { status: "processing", ended_at: (/* @__PURE__ */ new Date()).toISOString(), exit: out.exit });
-        return updateCall(callId, { status: "failed", error: "The bot stopped without a recording (see `docker logs` or worker.log).", ended_at: (/* @__PURE__ */ new Date()).toISOString() });
+        if (huddle ? huddleHasRecording(callId) : out.audio || out.video) return updateCall(callId, { status: "processing", ended_at: (/* @__PURE__ */ new Date()).toISOString(), exit: out.exit });
+        return updateCall(callId, {
+          status: "failed",
+          ended_at: (/* @__PURE__ */ new Date()).toISOString(),
+          error: huddle ? "The huddle stopped without a recording." : "The bot stopped without a recording (see `docker logs` or worker.log)."
+        });
       }
     } else gone = 0;
   }
@@ -25067,6 +25478,11 @@ async function processCall(callId) {
     audio = out.audio;
     video = out.video;
     timeline = out.timeline;
+  } else if (call.source === "huddle") {
+    const h = await huddleRecording(callId, call.agent_name);
+    audio = h.media;
+    video = h.hasVideo ? h.media : null;
+    timeline = h.timeline;
   } else {
     const anyInput = findInput(p.media);
     if (anyInput) {
@@ -25074,8 +25490,8 @@ async function processCall(callId) {
       audio = info.hasAudio ? anyInput : null;
       video = info.hasVideo ? anyInput : null;
     }
-    const screen = path10.join(p.media, "screen.mp4");
-    if (existsSync8(screen)) {
+    const screen = path11.join(p.media, "screen.mp4");
+    if (existsSync9(screen)) {
       video = screen;
       offset = Number(call.exit?.screen_offset ?? 0);
     }
@@ -25084,8 +25500,8 @@ async function processCall(callId) {
     const media = audio ?? video;
     if (!media) throw new Error("No recording to transcribe.");
     logCall(callId, `transcribing with ${config.asr}`);
-    let segs = await transcribe(media, p.dir, config.asrLanguage);
-    segs = applySpeakers(segs, parseTimeline(timeline ? readFileSync7(timeline, "utf8") : null));
+    let segs = await transcribe(media, p.dir, config.asrLanguage ?? call.spoken_language ?? null);
+    segs = applySpeakers(segs, parseTimeline(timeline ? readFileSync8(timeline, "utf8") : null));
     saveTranscript(callId, segs);
     logCall(callId, `transcript: ${segs.length} segment(s)`);
   }
@@ -25101,9 +25517,9 @@ async function processCall(callId) {
   return updateCall(callId, { status: "needs_plan" });
 }
 function findInput(dir3) {
-  if (!existsSync8(dir3)) return null;
+  if (!existsSync9(dir3)) return null;
   const f = readdirSync5(dir3).find((x) => x.startsWith("input."));
-  return f ? path10.join(dir3, f) : null;
+  return f ? path11.join(dir3, f) : null;
 }
 async function afterProcessing(callId) {
   let call = mustGetCall(callId);
@@ -25149,9 +25565,9 @@ function runAgentHook(callId) {
   const call = mustGetCall(callId);
   const prompt = agentPrompt(call, !!getPlan(callId));
   const cmd = config.agentCommand.replaceAll("{prompt}", shellQuote(prompt)).replaceAll("{call_id}", call.id).replaceAll("{workdir}", shellQuote(call.workdir ?? process.cwd()));
-  const out = openSync2(path10.join(callPaths(callId).dir, "agent.log"), "a");
+  const out = openSync3(path11.join(callPaths(callId).dir, "agent.log"), "a");
   const p = spawn7(process.platform === "win32" ? "cmd" : "sh", process.platform === "win32" ? ["/c", cmd] : ["-c", cmd], {
-    cwd: call.workdir && existsSync8(call.workdir) ? call.workdir : config.home,
+    cwd: call.workdir && existsSync9(call.workdir) ? call.workdir : config.home,
     detached: true,
     stdio: ["ignore", out, out],
     env: { ...process.env, OMA_CALL_ID: call.id }
@@ -25173,6 +25589,7 @@ var init_pipeline2 = __esm({
     init_outputs();
     init_build();
     init_bot();
+    init_huddle();
     init_meetily();
     init_screen();
     init_store();
@@ -25190,8 +25607,8 @@ var init_pipeline2 = __esm({
 });
 
 // src/views.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync8 } from "node:fs";
-import path11 from "node:path";
+import { existsSync as existsSync10, mkdirSync as mkdirSync9 } from "node:fs";
+import path12 from "node:path";
 function callLine(c) {
   return `${c.id} \xB7 ${c.title} \xB7 ${c.status}${c.error ? ` (${c.error})` : ""} \xB7 ${c.source}${c.repos.length ? ` \xB7 ${c.repos.join(", ")}` : ""}`;
 }
@@ -25200,10 +25617,10 @@ function callSummary(c) {
     `Call ${c.id}: ${c.title}`,
     `Status: ${c.status} \u2014 ${STATUS_TEXT[c.status]}${c.error ? `
 Error: ${c.error}` : ""}`,
-    `Source: ${c.source}${c.meeting_url ? ` (${c.meeting_url})` : ""} \xB7 autonomy: ${c.autonomy}${c.source === "bot" ? ` \xB7 acts: ${actOf(c)}` : ""} \xB7 repos: ${c.repos.join(", ") || "none"}${c.workdir ? ` \xB7 workdir: ${c.workdir}` : ""}`,
+    `Source: ${c.source}${c.meeting_url ? ` (${c.meeting_url})` : ""} \xB7 autonomy: ${c.autonomy}${isLiveSource(c) ? ` \xB7 acts: ${actOf(c)}` : ""} \xB7 repos: ${c.repos.join(", ") || "none"}${c.workdir ? ` \xB7 workdir: ${c.workdir}` : ""}`,
     `Outputs: ${outputsLine(outputsOf(c))}`
   ];
-  if (c.source === "bot" && (c.status === "joining" || c.status === "in_call")) {
+  if (isLiveSource(c) && (c.status === "joining" || c.status === "in_call")) {
     const st = botStatus(c.id);
     if (st) lines.push(`Bot: ${st.state}${st.participants != null ? ` \xB7 ${st.participants} participant(s)` : ""}${st.error ? ` \xB7 ${st.error}` : ""}`);
     if (actsDuring(c)) {
@@ -25261,10 +25678,10 @@ function planDetail(plan) {
   ].filter(Boolean).join("\n")).join("\n\n");
 }
 async function frameThumb(f, width = 768) {
-  const dir3 = path11.join(path11.dirname(f.file), `w${width}`);
-  const out = path11.join(dir3, path11.basename(f.file));
-  if (existsSync9(out)) return out;
-  mkdirSync8(dir3, { recursive: true });
+  const dir3 = path12.join(path12.dirname(f.file), `w${width}`);
+  const out = path12.join(dir3, path12.basename(f.file));
+  if (existsSync10(out)) return out;
+  mkdirSync9(dir3, { recursive: true });
   try {
     await run(config.ffmpeg, ["-hide_banner", "-nostats", "-y", "-i", f.file, "-vf", `scale='min(${width},iw)':-2`, "-q:v", "5", out], "thumb");
     return out;
@@ -25297,7 +25714,7 @@ var init_views = __esm({
 });
 
 // src/mcp/server.ts
-import { readFileSync as readFileSync8 } from "node:fs";
+import { readFileSync as readFileSync9 } from "node:fs";
 function resolveCall(id) {
   if (id) return mustGetCall(id);
   const c = latestCall();
@@ -25305,7 +25722,7 @@ function resolveCall(id) {
   return c;
 }
 async function image(f) {
-  return { type: "image", data: readFileSync8(await frameThumb(f)).toString("base64"), mimeType: "image/jpeg" };
+  return { type: "image", data: readFileSync9(await frameThumb(f)).toString("base64"), mimeType: "image/jpeg" };
 }
 function createServer() {
   const server = new McpServer({ name: "open-meeting-agent", version: "0.1.0" }, { instructions: INSTRUCTIONS });
@@ -25431,7 +25848,7 @@ Import one with import_meetily { meeting_id }.`);
     }
   }, guard(async (a) => {
     const c = resolveCall(a.call_id);
-    if (c.source !== "bot") return fail("Only a call the bot joined can be followed live.");
+    if (!isLiveSource(c)) return fail("Only a meeting the agent is in (the bot, or a huddle) can be followed live.");
     const r = await watchMeeting(c.id, a.since ?? 0, a.wait_seconds ?? 25);
     const next = r.view.lines.at(-1)?.seq ?? (a.since ?? 0);
     const mention = new Set(r.mentions.map((m) => m.seq));
@@ -25761,13 +26178,13 @@ Autonomy of a call: suggest = stop after the plan for the person to review; issu
 // src/ui/chats.ts
 import { randomBytes as randomBytes3 } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { existsSync as existsSync10, readdirSync as readdirSync6, readFileSync as readFileSync9, rmSync as rmSync6, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync11, readdirSync as readdirSync6, readFileSync as readFileSync10, rmSync as rmSync7, statSync as statSync4 } from "node:fs";
 import os2 from "node:os";
-import path12 from "node:path";
+import path13 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 function getChat(id) {
   try {
-    return readJson(file(id));
+    return readJson(file2(id));
   } catch {
     return null;
   }
@@ -25778,14 +26195,14 @@ function mustGetChat(id) {
   return c;
 }
 function listChats() {
-  if (!existsSync10(dir2())) return [];
+  if (!existsSync11(dir2())) return [];
   return readdirSync6(dir2()).filter((f) => f.endsWith(".json")).map((f) => getChat(f.slice(0, -5))).filter((c) => !!c).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map((c) => ({ id: c.id, title: c.title, call_id: c.call_id, updated_at: c.updated_at, running: running.has(c.id) }));
 }
 function validWorkdir(p) {
   if (!p) return null;
-  const abs = path12.resolve(p.replace(/^~(?=$|\/)/, os2.homedir()));
+  const abs = path13.resolve(p.replace(/^~(?=$|\/)/, os2.homedir()));
   try {
-    return statSync3(abs).isDirectory() ? abs : null;
+    return statSync4(abs).isDirectory() ? abs : null;
   } catch {
     return null;
   }
@@ -25827,7 +26244,7 @@ function updateChat(id, patch) {
 }
 function deleteChat(id) {
   running.get(id)?.stop();
-  rmSync6(file(id), { force: true });
+  rmSync7(file2(id), { force: true });
 }
 function emit(chatId, e) {
   chatEvents.emit("chat", { chat_id: chatId, ...e });
@@ -25835,13 +26252,13 @@ function emit(chatId, e) {
 function cliPath() {
   if (process.env.OMA_CLI_PATH) return process.env.OMA_CLI_PATH;
   const self = fileURLToPath3(import.meta.url);
-  return self.endsWith(".mjs") ? self : path12.resolve(path12.dirname(self), "..", "..", "dist", "oma.mjs");
+  return self.endsWith(".mjs") ? self : path13.resolve(path13.dirname(self), "..", "..", "dist", "oma.mjs");
 }
 function claudeHasMeetingTools() {
-  const settings = readJson(path12.join(os2.homedir(), ".claude", "settings.json"));
+  const settings = readJson(path13.join(os2.homedir(), ".claude", "settings.json"));
   if (Object.entries(settings?.enabledPlugins ?? {}).some(([k, on]) => on && k.startsWith("meeting-agent@"))) return true;
   try {
-    const user = JSON.parse(readFileSync9(path12.join(os2.homedir(), ".claude.json"), "utf8"));
+    const user = JSON.parse(readFileSync10(path13.join(os2.homedir(), ".claude.json"), "utf8"));
     return !!user.mcpServers?.["meeting-agent"];
   } catch {
     return false;
@@ -25991,7 +26408,7 @@ function stopChat(chatId) {
 function stopAll() {
   for (const id of [...running.keys()]) stopChat(id);
 }
-var chatEvents, dir2, file, newId, now, save, chatForCall, running, isRunning;
+var chatEvents, dir2, file2, newId, now, save, chatForCall, running, isRunning;
 var init_chats = __esm({
   "src/ui/chats.ts"() {
     "use strict";
@@ -26002,14 +26419,14 @@ var init_chats = __esm({
     init_store();
     chatEvents = new EventEmitter();
     chatEvents.setMaxListeners(100);
-    dir2 = () => path12.join(config.home, "ui", "chats");
-    file = (id) => {
+    dir2 = () => path13.join(config.home, "ui", "chats");
+    file2 = (id) => {
       if (!/^[a-z0-9-]{6,40}$/.test(id)) throw new Error(`invalid chat id: ${id}`);
-      return path12.join(dir2(), `${id}.json`);
+      return path13.join(dir2(), `${id}.json`);
     };
     newId = () => `${Date.now().toString(36)}-${randomBytes3(3).toString("hex")}`;
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    save = (c) => writeJson(file(c.id), c);
+    save = (c) => writeJson(file2(c.id), c);
     chatForCall = (callId) => listChats().find((c) => c.call_id === callId)?.id ?? null;
     running = /* @__PURE__ */ new Map();
     isRunning = (id) => running.has(id);
@@ -26022,16 +26439,16 @@ __export(server_exports, {
   startUi: () => startUi
 });
 import { randomBytes as randomBytes4, timingSafeEqual } from "node:crypto";
-import { createReadStream, existsSync as existsSync11, readFileSync as readFileSync10, statSync as statSync4 } from "node:fs";
+import { createReadStream, existsSync as existsSync12, readFileSync as readFileSync11, statSync as statSync5 } from "node:fs";
 import http from "node:http";
 import os3 from "node:os";
-import path13 from "node:path";
+import path14 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 function uiDir() {
   if (process.env.OMA_UI_DIR) return process.env.OMA_UI_DIR;
-  const here = path13.dirname(fileURLToPath4(import.meta.url));
-  for (const d of [path13.resolve(here, "..", "ui"), path13.resolve(here, "..", "..", "ui")]) {
-    if (existsSync11(path13.join(d, "index.html"))) return d;
+  const here = path14.dirname(fileURLToPath4(import.meta.url));
+  for (const d of [path14.resolve(here, "..", "ui"), path14.resolve(here, "..", "..", "ui")]) {
+    if (existsSync12(path14.join(d, "index.html"))) return d;
   }
   throw new Error("The UI files (ui/index.html) were not found next to the oma command.");
 }
@@ -26050,8 +26467,9 @@ function callItem(c) {
 }
 function callDetail(c) {
   const plan = getPlan(c.id);
-  const inMeeting = c.source === "bot" && (c.status === "joining" || c.status === "in_call");
-  const live = c.source === "bot" ? readLive(c.id, c.agent_name) : null;
+  const inMeeting = isLiveSource(c) && (c.status === "joining" || c.status === "in_call");
+  const live = isLiveSource(c) ? readLive(c.id, c.agent_name) : null;
+  const meta = c.source === "huddle" ? readMeta(c.id) : null;
   const pr = plan ? progress(plan) : null;
   return {
     call: {
@@ -26068,7 +26486,8 @@ function callDetail(c) {
       notes: c.notes,
       language: c.language
     },
-    bot: inMeeting ? botStatus(c.id) : null,
+    bot: inMeeting && c.source === "bot" ? botStatus(c.id) : null,
+    huddle: meta ? { speaker: meta.speaker, parts: meta.parts.length, transcribing: config.asr !== "none" } : null,
     live: live && (inMeeting || live.lines.length) ? live : null,
     /** Who answers when someone calls the agent in the meeting. */
     /** The names that call the agent in the meeting. */
@@ -26109,21 +26528,31 @@ async function state() {
   };
 }
 function setConfig(changes) {
-  const file2 = path13.join(config.home, "config.json");
-  const cur = readJson(file2) ?? {};
+  const file3 = path14.join(config.home, "config.json");
+  const cur = readJson(file3) ?? {};
   const warnings = [];
   for (const [k, raw] of Object.entries(changes)) {
     const v = String(raw ?? "").trim();
     const ok = SETTABLE[k];
-    if (!ok) throw new HttpError(400, `${k} can't be changed here (edit ${file2})`);
+    if (!ok) throw new HttpError(400, `${k} can't be changed here (edit ${file3})`);
     if (v && !ok(v)) throw new HttpError(400, `invalid ${k}: ${v}`);
     if (v) cur[k] = v;
     else delete cur[k];
     if (process.env[k] != null) warnings.push(`${k} is also set in the environment, which wins`);
   }
-  writeJson(file2, cur);
+  writeJson(file3, cur);
   reloadConfig();
   return warnings;
+}
+async function rawBody(req, max) {
+  const chunks = [];
+  let size2 = 0;
+  for await (const c of req) {
+    size2 += c.length;
+    if (size2 > max) throw new HttpError(413, "too large");
+    chunks.push(c);
+  }
+  return Buffer.concat(chunks);
 }
 async function body(req) {
   const chunks = [];
@@ -26151,16 +26580,20 @@ data: ${JSON.stringify(data)}
 `;
   for (const c of clients) c.write(msg);
 }
+function notifyHuddle(id, e) {
+  broadcast("huddle", { id, ...e });
+  broadcast("call", { id });
+}
 function mtime(f) {
   try {
-    return statSync4(f).mtimeMs;
+    return statSync5(f).mtimeMs;
   } catch {
     return 0;
   }
 }
 function size(f) {
   try {
-    return statSync4(f).size;
+    return statSync5(f).size;
   } catch {
     return 0;
   }
@@ -26175,7 +26608,7 @@ function poll() {
   }
   for (const c of calls.slice(0, 50)) {
     const p = callPaths(c.id);
-    const s = `${c.updated_at}:${mtime(p.plan)}:${mtime(p.transcript)}:${size(path13.join(p.bot, "live.jsonl"))}:${mtime(path13.join(p.bot, "status.json"))}`;
+    const s = `${c.updated_at}:${mtime(p.plan)}:${mtime(p.transcript)}:${size(path14.join(p.bot, "live.jsonl"))}:${mtime(path14.join(p.bot, "status.json"))}`;
     const prev = sigs.get(c.id);
     sigs.set(c.id, s);
     if (prev !== void 0 && prev !== s) broadcast("call", { id: c.id });
@@ -26196,10 +26629,10 @@ async function startUi(o = {}) {
       res.setHeader("x-content-type-options", "nosniff");
       res.setHeader("referrer-policy", "no-referrer");
       if (req.method === "GET" && STATIC[p]) {
-        const f = path13.join(dir3, STATIC[p]);
-        if (!existsSync11(f)) throw new HttpError(404, "not found");
-        const type = TYPES[path13.extname(f)] ?? "application/octet-stream";
-        let content = readFileSync10(f);
+        const f = path14.join(dir3, STATIC[p]);
+        if (!existsSync12(f)) throw new HttpError(404, "not found");
+        const type = TYPES[path14.extname(f)] ?? "application/octet-stream";
+        let content = readFileSync11(f);
         if (f.endsWith("index.html")) content = Buffer.from(content.toString("utf8").replace("__OMA_TOKEN__", token));
         res.writeHead(200, {
           "content-type": type,
@@ -26220,10 +26653,25 @@ async function startUi(o = {}) {
         req.on("close", () => clients.delete(res));
         return;
       }
+      const up = /^\/api\/huddles\/([a-z0-9-]+)\/(media|audio|screen)$/.exec(p);
+      if (req.method === "POST" && up) {
+        const type = req.headers["content-type"] ?? "";
+        if (!/^(application\/octet-stream|image\/jpeg)/.test(type)) throw new HttpError(415, "binary only");
+        const id = up[1];
+        const kind = up[2];
+        const data = await rawBody(req, kind === "media" ? 64e6 : kind === "screen" ? 8e6 : 4e6);
+        if (kind === "media") {
+          const q = url.searchParams;
+          return json(res, 200, addMedia(id, { part: Number(q.get("part")), seq: Number(q.get("seq")), ext: q.get("ext") ?? "webm", started: Number(q.get("started")) }, data));
+        }
+        if (kind === "audio") addAudio(id, data);
+        else setScreen(id, data);
+        return json(res, 200, { ok: true });
+      }
       const frame = /^\/api\/calls\/([a-z0-9-]+)\/frames\/(F\d+)$/.exec(p);
       if (req.method === "GET" && frame) {
         const f = getFrames(mustCall(frame[1]).id).find((x) => x.label === frame[2]);
-        if (!f || !existsSync11(f.file)) throw new HttpError(404, "no such frame");
+        if (!f || !existsSync12(f.file)) throw new HttpError(404, "no such frame");
         res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "private, max-age=3600" });
         createReadStream(f.file).pipe(res);
         return;
@@ -26237,7 +26685,7 @@ async function startUi(o = {}) {
       }
       throw new HttpError(404, "not found");
     } catch (e) {
-      const status = e instanceof HttpError ? e.status : e.status ?? 500;
+      const status = e instanceof HttpError || e instanceof HuddleError ? e.status : e.status ?? 500;
       if (!res.headersSent) json(res, status, { error: e.message });
       else res.end();
     }
@@ -26251,6 +26699,8 @@ async function startUi(o = {}) {
   });
   port = server.address().port;
   const timer = setInterval(poll, 1500);
+  adoptHuddles();
+  const huddles = setInterval(() => huddleTick(notifyHuddle), 500);
   const keepAlive = setInterval(() => {
     for (const c of clients) c.write(": ping\n\n");
   }, 2e4);
@@ -26259,6 +26709,7 @@ async function startUi(o = {}) {
     port,
     close: () => new Promise((resolve2) => {
       clearInterval(timer);
+      clearInterval(huddles);
       clearInterval(keepAlive);
       stopAll();
       for (const c of clients) c.end();
@@ -26280,6 +26731,7 @@ var init_server4 = __esm({
     init_outputs();
     init_pipeline2();
     init_bot();
+    init_huddle();
     init_store();
     init_tasks();
     init_chats();
@@ -26288,7 +26740,8 @@ var init_server4 = __esm({
       "/index.html": "index.html",
       "/app.css": "app.css",
       "/app.js": "app.js",
-      "/favicon.svg": "favicon.svg"
+      "/favicon.svg": "favicon.svg",
+      "/pcm-worklet.js": "pcm-worklet.js"
     };
     TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml", ".jpg": "image/jpeg" };
     HttpError = class extends Error {
@@ -26345,6 +26798,41 @@ var init_server4 = __esm({
         }
       }],
       ["GET", /^\/api\/calls\/([a-z0-9-]+)$/, (m) => callDetail(mustCall(m[1]))],
+      // A huddle: a meeting in this UI (the page records and uploads; see sources/huddle.ts).
+      ["POST", /^\/api\/huddles$/, (_m, b) => {
+        const act = ["after", "during", "both"].includes(b.act) ? b.act : void 0;
+        const autonomy = ["suggest", "issues", "prs"].includes(b.autonomy) ? b.autonomy : void 0;
+        const outputs = {};
+        for (const k of OUTPUT_KINDS) if (typeof b[k] === "string" && b[k]) outputs[k] = b[k];
+        const repo = str2(b.repo, 200);
+        const spoken = /^[a-z]{2}$/.test(str2(b.spoken, 5)) ? str2(b.spoken, 5) : null;
+        const call = startHuddle({
+          title: str2(b.title, 200) || void 0,
+          act,
+          autonomy,
+          outputs,
+          repos: repo ? [repo] : [],
+          workdir: validWorkdir(str2(b.workdir)) ?? validWorkdir(config.uiWorkdir),
+          speaker: str2(b.speaker, 60),
+          spokenLanguage: spoken
+        });
+        watchHuddle(call.id);
+        return callDetail(call);
+      }],
+      ["POST", /^\/api\/huddles\/([a-z0-9-]+)\/ask$/, (m, b) => {
+        const text2 = str2(b.text, 4e3);
+        if (!text2) throw new HttpError(400, "nothing to ask");
+        askInHuddle(m[1], text2);
+        return { ok: true };
+      }],
+      ["POST", /^\/api\/huddles\/([a-z0-9-]+)\/speaking$/, (m, b) => {
+        markSpeaking(m[1], Number(b.start), Number(b.end));
+        return { ok: true };
+      }],
+      ["POST", /^\/api\/huddles\/([a-z0-9-]+)\/end$/, async (m) => {
+        await endHuddle(m[1], "manual", notifyHuddle);
+        return callDetail(mustCall(m[1]));
+      }],
       ["PATCH", /^\/api\/calls\/([a-z0-9-]+)$/, (m, b) => {
         const c = mustCall(m[1]);
         const patch = {};
@@ -26365,7 +26853,7 @@ var init_server4 = __esm({
         const c = mustCall(m[1]);
         const text2 = str2(b.text, 4e3);
         if (!text2) throw new HttpError(400, "nothing to say");
-        if (c.source !== "bot" || !["joining", "in_call"].includes(c.status)) throw new HttpError(400, "The agent is not in this meeting.");
+        if (!isLiveSource(c) || !["joining", "in_call"].includes(c.status)) throw new HttpError(400, "The agent is not in this meeting.");
         return sayInMeeting(c.id, text2, 6e3);
       }],
       ["POST", /^\/api\/calls\/([a-z0-9-]+)\/deliver$/, async (m, b) => {
@@ -26426,7 +26914,7 @@ init_store();
 init_tasks();
 init_views();
 import { spawn as spawn8 } from "node:child_process";
-import { readFileSync as readFileSync11 } from "node:fs";
+import { readFileSync as readFileSync12 } from "node:fs";
 import { parseArgs } from "node:util";
 var HELP = `oma \u2014 open-meeting-agent
 
@@ -26603,7 +27091,7 @@ Admit "${c.agent_name}" if the meeting has a lobby. \`oma end ${c.id}\` when you
     case "plan": {
       if (rest[0] === "save") {
         if (!rest[1] || !rest[2]) throw new Error("usage: oma plan save <call> <file.json>");
-        return out(planText(saveHostPlan(rest[1], readFileSync11(rest[2], "utf8"))));
+        return out(planText(saveHostPlan(rest[1], readFileSync12(rest[2], "utf8"))));
       }
       if (rest[0] === "build") return out(planText(await buildPlan(resolve(rest[1]).id)));
       const plan = mustGetPlan(resolve(rest[0]).id);
