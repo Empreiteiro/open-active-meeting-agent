@@ -30,10 +30,12 @@ export function actOf(call: Call): ActMode {
   return call.act ?? 'after';
 }
 
-/** The agent answers in the meeting (bot calls only). */
-export const actsDuring = (call: Call): boolean => call.source === 'bot' && actOf(call) !== 'after';
+/** A call with a live side: the bot in a meeting, or a huddle in the web UI. */
+export const isLiveSource = (call: Call): boolean => call.source === 'bot' || call.source === 'huddle';
+/** The agent answers in the meeting. */
+export const actsDuring = (call: Call): boolean => isLiveSource(call) && actOf(call) !== 'after';
 /** The agent delivers after the call (act "during" only keeps the plan). */
-export const actsAfter = (call: Call): boolean => !(call.source === 'bot' && actOf(call) === 'during');
+export const actsAfter = (call: Call): boolean => !(isLiveSource(call) && actOf(call) === 'during');
 
 /** Outputs from a request: a known target, "none" (nothing), or unchanged. */
 export function parseOutputs(input: Partial<Record<OutputKind, string | null | undefined>> | undefined, base: Outputs): Outputs {

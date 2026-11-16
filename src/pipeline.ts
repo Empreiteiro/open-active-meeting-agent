@@ -1,5 +1,6 @@
 // The life of a call:
 //   join (bot) ─┐  (act during/both: answers in the meeting while it lasts — live.ts)
+//   huddle ─────┤  (a meeting in the web UI: the page records, the UI server plays the bot)
 //   meetily ────┼─→ processing (transcript + screen frames) → needs_plan → planned → outputs
 //   file ───────┘                       (tasks platform, CRM, document — outputs/) → tasks
 // Long work runs in a detached worker process (`oma worker <id>`), so it keeps
@@ -15,11 +16,12 @@ import { config } from './config.js';
 import { liveStep } from './live.js';
 import { llmConfigured } from './llm/index.js';
 import { extractFrames, probe } from './media/ffmpeg.js';
-import { actsAfter, actsDuring, defaultOutputs, deliverOutputs, outputsOf, parseOutputs } from './outputs/index.js';
+import { actsAfter, actsDuring, defaultOutputs, deliverOutputs, isLiveSource, outputsOf, parseOutputs } from './outputs/index.js';
 import { buildPlan, PlanEmptyError } from './plan/build.js';
 import {
   botOutputs, botStatus, containerRunning, detectProvider, killBot, requestLeave, startBot,
 } from './sources/bot.js';
+import { huddleAlive, huddleHasRecording, huddleRecording, initHuddle } from './sources/huddle.js';
 import { readMeetilyMeeting } from './sources/meetily.js';
 import { findScreenRecording } from './sources/screen.js';
 import {
@@ -92,6 +94,18 @@ export async function joinMeeting(url: string, o: CallOptions = {}): Promise<Cal
   return mustGetCall(call.id);
 }
 
+/** A huddle in the web UI: you share your screen and talk there; the agent
+ *  listens and answers (act both unless asked otherwise). The page records. */
+export function startHuddle(o: CallOptions & { speaker?: string; spokenLanguage?: string | null } = {}): Call {
+  const call = createCall({
+    ...base(o), act: o.act ?? 'both', title: o.title ?? `Huddle ${new Date().toLocaleString()}`, source: 'huddle', status: 'in_call',
+    joined_at: new Date().toISOString(), spoken_language: o.spokenLanguage ?? null,
+  });
+  initHuddle(call.id, o.speaker?.trim().slice(0, 60) || 'Me', config.asr !== 'none');
+  spawnWorker(call.id);
+  return call;
+}
+
 export async function importRecording(file: string, o: CallOptions = {}): Promise<Call> {
   const abs = path.resolve(file);
   if (!existsSync(abs)) throw new Error(`file not found: ${abs}`);
@@ -135,7 +149,7 @@ function writeOffset(callId: string, offset: number) {
 
 export async function endMeeting(callId: string): Promise<Call> {
   const call = mustGetCall(callId);
-  if (call.source !== 'bot') throw new Error('Only a call the bot joined can be ended.');
+  if (!isLiveSource(call)) throw new Error('Only a meeting the agent is in (the bot, or a huddle) can be ended.');
   if (!['joining', 'in_call'].includes(call.status)) throw new Error(`The call is ${call.status}, not in the meeting.`);
   requestLeave(callId);
   logCall(callId, 'leave requested');
@@ -146,6 +160,12 @@ export async function endMeeting(callId: string): Promise<Call> {
 
 export async function cancelMeeting(callId: string): Promise<Call> {
   const call = mustGetCall(callId);
+  if (call.source === 'huddle') {
+    // The page is told to stop (and its uploads refused) once the call is cancelled.
+    const done = updateCall(callId, { status: 'cancelled', ended_at: new Date().toISOString() });
+    rmSync(callPaths(callId).bot, { recursive: true, force: true });
+    return done;
+  }
   if (call.source === 'bot') {
     requestLeave(callId, true);
     await killBot(callId);
@@ -164,7 +184,7 @@ export async function runWorker(callId: string): Promise<void> {
   try {
     let call = mustGetCall(callId);
     if (call.status === 'cancelled') return;
-    if (call.source === 'bot' && ['joining', 'in_call'].includes(call.status)) {
+    if (isLiveSource(call) && ['joining', 'in_call'].includes(call.status)) {
       call = await followBot(callId);
       if (call.status !== 'processing') return;
     }
@@ -202,12 +222,16 @@ async function followBot(callId: string): Promise<Call> {
       const out = botOutputs(callId);
       return updateCall(callId, { status: 'processing', ended_at: new Date().toISOString(), exit: out.exit });
     }
-    // The container is gone without saying "done" (killed, crashed): use what it left.
-    if (!(await containerRunning(callId))) {
+    // The container (a huddle: its page) is gone without saying "done" (killed, crashed): use what it left.
+    const huddle = call.source === 'huddle';
+    if (!(huddle ? huddleAlive(callId) : await containerRunning(callId))) {
       if (++gone >= 3) {
         const out = botOutputs(callId);
-        if (out.audio || out.video) return updateCall(callId, { status: 'processing', ended_at: new Date().toISOString(), exit: out.exit });
-        return updateCall(callId, { status: 'failed', error: 'The bot stopped without a recording (see `docker logs` or worker.log).', ended_at: new Date().toISOString() });
+        if (huddle ? huddleHasRecording(callId) : out.audio || out.video) return updateCall(callId, { status: 'processing', ended_at: new Date().toISOString(), exit: out.exit });
+        return updateCall(callId, {
+          status: 'failed', ended_at: new Date().toISOString(),
+          error: huddle ? 'The huddle stopped without a recording.' : 'The bot stopped without a recording (see `docker logs` or worker.log).',
+        });
       }
     } else gone = 0;
   }
@@ -226,6 +250,11 @@ export async function processCall(callId: string): Promise<Call> {
     audio = out.audio;
     video = out.video;
     timeline = out.timeline;
+  } else if (call.source === 'huddle') {
+    const h = await huddleRecording(callId, call.agent_name);
+    audio = h.media;
+    video = h.hasVideo ? h.media : null;
+    timeline = h.timeline;
   } else {
     const anyInput = findInput(p.media);
     if (anyInput) {
@@ -243,7 +272,7 @@ export async function processCall(callId: string): Promise<Call> {
     const media = audio ?? video;
     if (!media) throw new Error('No recording to transcribe.');
     logCall(callId, `transcribing with ${config.asr}`);
-    let segs = await transcribe(media, p.dir, config.asrLanguage);
+    let segs = await transcribe(media, p.dir, config.asrLanguage ?? call.spoken_language ?? null);
     segs = applySpeakers(segs, parseTimeline(timeline ? readFileSync(timeline, 'utf8') : null));
     saveTranscript(callId, segs);
     logCall(callId, `transcript: ${segs.length} segment(s)`);

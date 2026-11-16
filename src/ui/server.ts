@@ -16,9 +16,12 @@ import { config, CRM_TARGETS, DOC_TARGETS, reloadConfig, TASKS_TARGETS } from '.
 import { agentNames, agentWatching, readLive, sayInMeeting } from '../live.js';
 import { llmConfigured, llmLabel } from '../llm/index.js';
 import { doctor } from '../mcp/server.js';
-import { actOf, deliverOutputs, liveTaskTarget, OUTPUT_KINDS, outputsOf, resultsText } from '../outputs/index.js';
-import { cancelMeeting, endMeeting, joinMeeting } from '../pipeline.js';
+import { actOf, deliverOutputs, isLiveSource, liveTaskTarget, OUTPUT_KINDS, outputsOf, resultsText } from '../outputs/index.js';
+import { cancelMeeting, endMeeting, joinMeeting, startHuddle } from '../pipeline.js';
 import { botStatus } from '../sources/bot.js';
+import {
+  addAudio, addMedia, adoptHuddles, askInHuddle, endHuddle, HuddleError, huddleTick, markSpeaking, readMeta, setScreen, watchHuddle,
+} from '../sources/huddle.js';
 import { callPaths, getCall, getFrames, getPlan, getTranscript, listCalls, readJson, updateCall, writeJson } from '../store.js';
 import { progress, readyTasks } from '../tasks.js';
 import type { ActMode, Autonomy, Call, OutputKind } from '../types.js';
@@ -28,6 +31,7 @@ import {
 
 const STATIC: Record<string, string> = {
   '/': 'index.html', '/index.html': 'index.html', '/app.css': 'app.css', '/app.js': 'app.js', '/favicon.svg': 'favicon.svg',
+  '/pcm-worklet.js': 'pcm-worklet.js',
 };
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.jpg': 'image/jpeg' };
 
@@ -56,8 +60,9 @@ function callItem(c: Call) {
 
 function callDetail(c: Call) {
   const plan = getPlan(c.id);
-  const inMeeting = c.source === 'bot' && (c.status === 'joining' || c.status === 'in_call');
-  const live = c.source === 'bot' ? readLive(c.id, c.agent_name) : null;
+  const inMeeting = isLiveSource(c) && (c.status === 'joining' || c.status === 'in_call');
+  const live = isLiveSource(c) ? readLive(c.id, c.agent_name) : null;
+  const meta = c.source === 'huddle' ? readMeta(c.id) : null;
   const pr = plan ? progress(plan) : null;
   return {
     call: {
@@ -65,7 +70,8 @@ function callDetail(c: Call) {
       meeting_url: c.meeting_url ?? null, joined_at: c.joined_at ?? null, ended_at: c.ended_at ?? null, live_tasks: c.live_tasks ?? [],
       notes: c.notes, language: c.language,
     },
-    bot: inMeeting ? botStatus(c.id) : null,
+    bot: inMeeting && c.source === 'bot' ? botStatus(c.id) : null,
+    huddle: meta ? { speaker: meta.speaker, parts: meta.parts.length, transcribing: config.asr !== 'none' } : null,
     live: live && (inMeeting || live.lines.length) ? live : null,
     /** Who answers when someone calls the agent in the meeting. */
     /** The names that call the agent in the meeting. */
@@ -134,6 +140,17 @@ function setConfig(changes: Record<string, unknown>): string[] {
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 
+async function rawBody(req: http.IncomingMessage, max: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size > max) throw new HttpError(413, 'too large');
+    chunks.push(c as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 async function body(req: http.IncomingMessage): Promise<Record<string, any>> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -192,6 +209,33 @@ const routes: Array<[string, RegExp, Handler]> = [
     }
   }],
   ['GET', /^\/api\/calls\/([a-z0-9-]+)$/, (m) => callDetail(mustCall(m[1]!))],
+
+  // A huddle: a meeting in this UI (the page records and uploads; see sources/huddle.ts).
+  ['POST', /^\/api\/huddles$/, (_m, b) => {
+    const act = ['after', 'during', 'both'].includes(b.act) ? b.act as ActMode : undefined;
+    const autonomy = ['suggest', 'issues', 'prs'].includes(b.autonomy) ? b.autonomy as Autonomy : undefined;
+    const outputs: Partial<Record<OutputKind, string | null>> = {};
+    for (const k of OUTPUT_KINDS) if (typeof b[k] === 'string' && b[k]) outputs[k] = b[k];
+    const repo = str(b.repo, 200);
+    const spoken = /^[a-z]{2}$/.test(str(b.spoken, 5)) ? str(b.spoken, 5) : null;
+    const call = startHuddle({
+      title: str(b.title, 200) || undefined, act, autonomy, outputs, repos: repo ? [repo] : [],
+      workdir: validWorkdir(str(b.workdir)) ?? validWorkdir(config.uiWorkdir), speaker: str(b.speaker, 60), spokenLanguage: spoken,
+    });
+    watchHuddle(call.id);
+    return callDetail(call);
+  }],
+  ['POST', /^\/api\/huddles\/([a-z0-9-]+)\/ask$/, (m, b) => {
+    const text = str(b.text, 4000);
+    if (!text) throw new HttpError(400, 'nothing to ask');
+    askInHuddle(m[1]!, text);
+    return { ok: true };
+  }],
+  ['POST', /^\/api\/huddles\/([a-z0-9-]+)\/speaking$/, (m, b) => { markSpeaking(m[1]!, Number(b.start), Number(b.end)); return { ok: true }; }],
+  ['POST', /^\/api\/huddles\/([a-z0-9-]+)\/end$/, async (m) => {
+    await endHuddle(m[1]!, 'manual', notifyHuddle);
+    return callDetail(mustCall(m[1]!));
+  }],
   ['PATCH', /^\/api\/calls\/([a-z0-9-]+)$/, (m, b) => {
     const c = mustCall(m[1]!);
     const patch: Partial<Call> = {};
@@ -208,7 +252,7 @@ const routes: Array<[string, RegExp, Handler]> = [
     const c = mustCall(m[1]!);
     const text = str(b.text, 4000);
     if (!text) throw new HttpError(400, 'nothing to say');
-    if (c.source !== 'bot' || !['joining', 'in_call'].includes(c.status)) throw new HttpError(400, 'The agent is not in this meeting.');
+    if (!isLiveSource(c) || !['joining', 'in_call'].includes(c.status)) throw new HttpError(400, 'The agent is not in this meeting.');
     return sayInMeeting(c.id, text, 6000);
   }],
   ['POST', /^\/api\/calls\/([a-z0-9-]+)\/deliver$/, async (m, b) => {
@@ -252,6 +296,11 @@ function broadcast(event: string, data: unknown) {
   for (const c of clients) c.write(msg);
 }
 chatEvents.on('chat', (e) => broadcast('chat', e));
+/** A huddle's news for its page: a turn transcribed, an answer to read aloud, asked to stop. */
+function notifyHuddle(id: string, e: Record<string, unknown>) {
+  broadcast('huddle', { id, ...e });
+  broadcast('call', { id });
+}
 
 /** What changed on disk: the call list, and each call (status, plan, live lines). */
 const sigs = new Map<string, string>();
@@ -316,6 +365,21 @@ export async function startUi(o: { port?: number } = {}): Promise<UiServer> {
         req.on('close', () => clients.delete(res));
         return;
       }
+      // A huddle's uploads: binary, from its page.
+      const up = /^\/api\/huddles\/([a-z0-9-]+)\/(media|audio|screen)$/.exec(p);
+      if (req.method === 'POST' && up) {
+        const type = req.headers['content-type'] ?? '';
+        if (!/^(application\/octet-stream|image\/jpeg)/.test(type)) throw new HttpError(415, 'binary only');
+        const id = up[1]!;
+        const kind = up[2]!;
+        const data = await rawBody(req, kind === 'media' ? 64_000_000 : kind === 'screen' ? 8_000_000 : 4_000_000);
+        if (kind === 'media') {
+          const q = url.searchParams;
+          return json(res, 200, addMedia(id, { part: Number(q.get('part')), seq: Number(q.get('seq')), ext: q.get('ext') ?? 'webm', started: Number(q.get('started')) }, data));
+        }
+        if (kind === 'audio') addAudio(id, data); else setScreen(id, data);
+        return json(res, 200, { ok: true });
+      }
       const frame = /^\/api\/calls\/([a-z0-9-]+)\/frames\/(F\d+)$/.exec(p);
       if (req.method === 'GET' && frame) {
         const f = getFrames(mustCall(frame[1]!).id).find((x) => x.label === frame[2]);
@@ -333,7 +397,7 @@ export async function startUi(o: { port?: number } = {}): Promise<UiServer> {
       }
       throw new HttpError(404, 'not found');
     } catch (e) {
-      const status = e instanceof HttpError ? e.status : (e as { status?: number }).status ?? 500;
+      const status = e instanceof HttpError || e instanceof HuddleError ? e.status : (e as { status?: number }).status ?? 500;
       if (!res.headersSent) json(res, status, { error: (e as Error).message });
       else res.end();
     }
@@ -345,12 +409,15 @@ export async function startUi(o: { port?: number } = {}): Promise<UiServer> {
   });
   port = (server.address() as { port: number }).port;
   const timer = setInterval(poll, 1500);
+  adoptHuddles();
+  const huddles = setInterval(() => huddleTick(notifyHuddle), 500);
   const keepAlive = setInterval(() => { for (const c of clients) c.write(': ping\n\n'); }, 20_000);
   return {
     url: `http://127.0.0.1:${port}`,
     port,
     close: () => new Promise((resolve) => {
       clearInterval(timer);
+      clearInterval(huddles);
       clearInterval(keepAlive);
       stopAll();
       for (const c of clients) c.end();

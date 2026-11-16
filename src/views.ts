@@ -6,7 +6,7 @@ import { config } from './config.js';
 import { run } from './media/ffmpeg.js';
 import { fmtTime } from './plan/prompt.js';
 import { readLive } from './live.js';
-import { actOf, actsDuring, liveTaskTarget, outputsLine, outputsOf } from './outputs/index.js';
+import { actOf, actsDuring, isLiveSource, liveTaskTarget, outputsLine, outputsOf } from './outputs/index.js';
 import { botStatus } from './sources/bot.js';
 import { callPaths, getFrames, getPlan, getTranscript } from './store.js';
 import { progress, readyTasks } from './tasks.js';
@@ -30,10 +30,10 @@ export function callSummary(c: Call): string {
   const lines = [
     `Call ${c.id}: ${c.title}`,
     `Status: ${c.status} — ${STATUS_TEXT[c.status]}${c.error ? `\nError: ${c.error}` : ''}`,
-    `Source: ${c.source}${c.meeting_url ? ` (${c.meeting_url})` : ''} · autonomy: ${c.autonomy}${c.source === 'bot' ? ` · acts: ${actOf(c)}` : ''} · repos: ${c.repos.join(', ') || 'none'}${c.workdir ? ` · workdir: ${c.workdir}` : ''}`,
+    `Source: ${c.source}${c.meeting_url ? ` (${c.meeting_url})` : ''} · autonomy: ${c.autonomy}${isLiveSource(c) ? ` · acts: ${actOf(c)}` : ''} · repos: ${c.repos.join(', ') || 'none'}${c.workdir ? ` · workdir: ${c.workdir}` : ''}`,
     `Outputs: ${outputsLine(outputsOf(c))}`,
   ];
-  if (c.source === 'bot' && (c.status === 'joining' || c.status === 'in_call')) {
+  if (isLiveSource(c) && (c.status === 'joining' || c.status === 'in_call')) {
     const st = botStatus(c.id);
     if (st) lines.push(`Bot: ${st.state}${st.participants != null ? ` · ${st.participants} participant(s)` : ''}${st.error ? ` · ${st.error}` : ''}`);
     if (actsDuring(c)) {

@@ -1,7 +1,8 @@
 // Shared shapes. A "call" is one meeting the agent took part in (or one
 // recording imported from meetily or a file), stored as a folder on disk.
 
-export type CallSource = 'bot' | 'meetily' | 'file';
+/** bot: joined a Meet / Teams call. huddle: a meeting in the web UI itself (you share your screen there). */
+export type CallSource = 'bot' | 'huddle' | 'meetily' | 'file';
 
 /** How far the agent goes after the meeting without asking.
  *  suggest: builds the plan and waits for the person.
@@ -139,6 +140,8 @@ export interface Call {
   container?: string | null;
   meetily_id?: string | null;
   language: string;
+  /** The language spoken, when known (a huddle: the browser's): a hint for the transcription. */
+  spoken_language?: string | null;
   created_at: string;
   updated_at: string;
   joined_at?: string | null;

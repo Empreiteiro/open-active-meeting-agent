@@ -13,10 +13,11 @@
 import path from 'node:path';
 import { config } from './config.js';
 import { chat, llmConfigured } from './llm/index.js';
-import { actsAfter, actsDuring, createTaskNow, liveTaskTarget } from './outputs/index.js';
+import { actsAfter, actsDuring, createTaskNow, isLiveSource, liveTaskTarget } from './outputs/index.js';
 import { parseJsonObject } from './plan/normalize.js';
-import { fmtTime, languageName } from './plan/prompt.js';
+import { fmtTime, languageName, type PlanBlock } from './plan/prompt.js';
 import { readLiveEvents, sendBotCommand } from './sources/bot.js';
+import { huddleScreen, readMeta } from './sources/huddle.js';
 import { callPaths, logCall, mustGetCall, readJson, updateCall, writeJson } from './store.js';
 import type { Call, PlanPriority } from './types.js';
 
@@ -54,15 +55,39 @@ export function readLive(callId: string, agentName: string): LiveView {
 /** Lowercase, no accents, words only: "Olá, @Meeting-Agent!" → "ola meeting agent". */
 export const fold = (s: string): string => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
+/** One letter off, for words of 4+ letters ("agents", "meting"). */
+function nearWord(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 4 || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+}
+
+/** The text names the agent. A name of several words may come a letter off in
+ *  each (captions and transcription slip: "Meeting Agents"); a one-word name
+ *  must match exactly ("assistentes" is not "assistente"). */
 export function mentionsAgent(text: string, names: string[]): boolean {
-  const t = ` ${fold(text)} `;
+  const words = fold(text).split(' ').filter(Boolean);
   return names.some((n) => {
-    const f = fold(n);
-    return f.length >= 3 && t.includes(` ${f} `);
+    const want = fold(n).split(' ').filter(Boolean);
+    if (!want.length || want.join(' ').length < 3) return false;
+    for (let i = 0; i + want.length <= words.length; i++) {
+      if (want.every((w, k) => (want.length > 1 ? nearWord(words[i + k]!, w) : words[i + k] === w))) return true;
+    }
+    return false;
   });
 }
 
 export const agentNames = (call: Call): string[] => [call.agent_name, ...config.liveNames];
+
+/** Someone addresses the agent: by name — or, in a huddle, by typing (only
+ *  the agent reads that box). */
+export function addressesAgent(call: Call, line: LiveLine, names = agentNames(call)): boolean {
+  if (line.kind === 'agent') return false;
+  return (call.source === 'huddle' && line.kind === 'chat') || mentionsAgent(line.text, names);
+}
 
 /** "[03:12] Ana: …" — times from when the agent got in. */
 export function liveLineText(call: Call, l: { kind: string; speaker: string; text: string; at: number }): string {
@@ -108,7 +133,7 @@ export function greetingText(call: Call): string | null {
 /** Post in the meeting chat. Waits a few seconds for the bot's answer. */
 export async function sayInMeeting(callId: string, text: string, waitMs = 0): Promise<{ id: string; ok: boolean | null; error?: string }> {
   const call = mustGetCall(callId);
-  if (call.source !== 'bot' || !['joining', 'in_call'].includes(call.status)) throw new Error(`The agent is not in the meeting (call ${call.status}).`);
+  if (!isLiveSource(call) || !['joining', 'in_call'].includes(call.status)) throw new Error(`The agent is not in the meeting (call ${call.status}).`);
   const id = sendBotCommand(callId, text.trim().slice(0, 2000));
   logCall(callId, `live: said "${text.slice(0, 120)}"`);
   const until = Date.now() + waitMs;
@@ -148,7 +173,7 @@ export async function watchMeeting(callId: string, since = 0, waitSec = 25): Pro
     const lines = view.lines.filter((l) => l.seq > since);
     if (lines.length || !['joining', 'in_call'].includes(call.status) || Date.now() >= until) {
       const names = agentNames(call);
-      return { call, view, lines, mentions: lines.filter((l) => l.kind !== 'agent' && mentionsAgent(l.text, names)) };
+      return { call, view, lines, mentions: lines.filter((l) => addressesAgent(call, l, names)) };
     }
     await sleep(1_000);
   }
@@ -164,11 +189,12 @@ export async function liveStep(callId: string): Promise<void> {
   if (!actsDuring(call) || call.status !== 'in_call') return;
   const view = readLive(callId, call.agent_name);
   const st = readJson<LiveState>(stateFile(callId)) ?? { handled: 0, greeted: false };
-  // Hello once the bot says what it can do (its chat is set up by then).
+  // Hello once the bot says what it can do (its chat is set up by then). Not
+  // in a huddle: the person started it to talk to the agent.
   if (!st.greeted && view.captions !== null) {
     st.greeted = true;
     writeJson(stateFile(callId), st);
-    const hello = greetingText(call);
+    const hello = call.source === 'huddle' ? null : greetingText(call);
     if (hello) await sayInMeeting(callId, hello).catch(() => {});
   }
   const names = agentNames(call);
@@ -176,7 +202,7 @@ export async function liveStep(callId: string): Promise<void> {
   for (let i = 0; i < view.lines.length; i++) {
     const line = view.lines[i]!;
     if (line.seq <= st.handled) continue;
-    if (line.kind === 'agent' || !mentionsAgent(line.text, names)) { st.handled = line.seq; continue; }
+    if (!addressesAgent(call, line, names)) { st.handled = line.seq; continue; }
     // Let the person finish the request: wait while they are still speaking (8 s at most).
     if (line.kind === 'speech' && view.speaking.some((s) => s.speaker === line.speaker) && now - line.at < 8_000) break;
     const request = [line];
@@ -209,7 +235,10 @@ async function answer(call: Call, view: LiveView, request: LiveLine[]): Promise<
 
 export function livePrompt(call: Call): string {
   const target = liveTaskTarget(call);
-  return `You are "${call.agent_name}", an AI assistant taking part in a live meeting ("${call.title}") through its chat. You read the meeting's live captions and chat. Someone just addressed you.
+  const where = call.source === 'huddle'
+    ? `in a huddle with ${readMeta(call.id)?.speaker ?? 'the person'} in the open-meeting-agent web UI ("${call.title}"): they share their screen and talk to you. You read the live transcript of what they say (and what they type), and you see their screen as it is now when the image is attached. Your reply is shown to them and read aloud, so write it to be heard (no markdown, no long links). They just addressed you.`
+    : `taking part in a live meeting ("${call.title}") through its chat. You read the meeting's live captions and chat. Someone just addressed you.`;
+  return `You are "${call.agent_name}", an AI assistant ${where}
 
 Decide what to do, and answer ONLY with JSON: {"reply":"…","note":null,"task":null}
 - "reply": your chat message, in ${languageName(call.language)}: 1 to 3 short sentences (at most 400 characters), friendly and to the point. Always reply. Answer from what was said in the meeting; when asked to do something, say what you will do; when something is missing, ask for it. Never make up facts nobody said.
@@ -231,7 +260,12 @@ async function answerWithModel(call: Call, view: LiveView, who: string, text: st
     done ? `<tasks_created_in_this_meeting>\n${done}\n</tasks_created_in_this_meeting>` : '',
     `<addressed_by>${who}</addressed_by>\n<request>${text}</request>`,
   ].filter(Boolean).join('\n\n');
-  const r = await chat(livePrompt(call), [{ role: 'user', content: user }], { maxTokens: 1_200, timeoutMs: 60_000 });
+  // A huddle: what is on the screen right now.
+  const screen = call.source === 'huddle' ? huddleScreen(call.id) : null;
+  const content: string | PlanBlock[] = screen
+    ? [{ type: 'text', text: `${user}\n\n<screen>The person's shared screen right now:</screen>` }, { type: 'image', label: 'screen', file: screen }]
+    : user;
+  const r = await chat(livePrompt(call), [{ role: 'user', content }], { maxTokens: 1_200, timeoutMs: 90_000 });
   const j = parseJsonObject(r.text) ?? {};
   const str = (x: unknown, max: number) => (typeof x === 'string' ? x.trim().slice(0, max) : '');
   const reply = str(j.reply, 600);

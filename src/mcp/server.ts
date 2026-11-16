@@ -13,7 +13,7 @@ import { spread } from '../media/ffmpeg.js';
 import {
   agentPrompt, cancelMeeting, endMeeting, importMeetily, importRecording, joinMeeting, runAgentHook, spawnWorker,
 } from '../pipeline.js';
-import { actOf, deliverOutputs, outputsOf, parseOutputs, recordOutput, resultsText } from '../outputs/index.js';
+import { actOf, deliverOutputs, isLiveSource, outputsOf, parseOutputs, recordOutput, resultsText } from '../outputs/index.js';
 import { tasksSetupProblem } from '../outputs/tasks.js';
 import { buildPlan, callBlocks, PlanEmptyError, planWants, saveHostPlan } from '../plan/build.js';
 import { planRules } from '../plan/prompt.js';
@@ -173,7 +173,7 @@ export function createServer(): McpServer {
     },
   }, guard(async (a) => {
     const c = resolveCall(a.call_id);
-    if (c.source !== 'bot') return fail('Only a call the bot joined can be followed live.');
+    if (!isLiveSource(c)) return fail('Only a meeting the agent is in (the bot, or a huddle) can be followed live.');
     const r = await watchMeeting(c.id, a.since ?? 0, a.wait_seconds ?? 25);
     const next = r.view.lines.at(-1)?.seq ?? (a.since ?? 0);
     const mention = new Set(r.mentions.map((m) => m.seq));
