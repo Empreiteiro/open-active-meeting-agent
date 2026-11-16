@@ -61,6 +61,9 @@ test('mentions: the agent\'s name in speech or chat, accents and punctuation ign
   assert.ok(mentionsAgent('@meeting agent can you help', names));
   assert.ok(mentionsAgent('ok assistente, anota isso', names));
   assert.ok(!mentionsAgent('the meeting agenda is long', names));
+  assert.ok(mentionsAgent('Meeting Agents, what is on my screen?', names)); // a transcription slip
+  assert.ok(mentionsAgent('meting agent anota isso', names));
+  assert.ok(!mentionsAgent('a meeting about agents', names));
   assert.ok(!mentionsAgent('assistentes de vendas', names));
 });
 
