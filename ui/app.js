@@ -44,6 +44,13 @@ const I18N = {
     save: 'Save', saved: 'Saved', machine: 'This machine', checking: 'Checking…', secrets: 'Tokens and keys: {file}',
     searchPlaceholder: 'Search meetings and chats', nothingFound: 'Nothing found', liveCount: '{n} in a meeting', ready: 'ready', local: 'local',
     lost: 'Lost the connection to oma ui.', reload: 'Reload', sent: 'Sent to the meeting', ended: 'The agent is leaving the meeting.',
+    startHuddle: 'Start a huddle', huddleTitle: 'Start a huddle', yourName: 'Your name', shareScreen: 'Share my screen',
+    huddleHelp: 'A meeting here, just you and the agent: share your screen and talk. It listens, sees the screen, and answers here, in writing and out loud. Call it by name ("{name}, …") or type to it.',
+    start: 'Start', mediaDenied: 'Could not use the screen or the microphone:', huddleNotHere: 'This huddle is not recording in this tab.',
+    continueHere: 'Continue here', endHuddle: 'End huddle', ending: 'Ending…', mute: 'Mute', unmute: 'Unmute', voiceOn: 'Voice on', voiceOff: 'Voice off',
+    rec: 'Recording', askPlaceholder: 'Type to the agent (it answers right away)', noAsr: 'No transcription is set up: the agent only reads what you type (the recording is kept).',
+    liveAsr: 'Live transcript on', noScreen: 'Microphone only', screenStopped: 'Screen sharing stopped (the microphone goes on).', huddleEnded: 'The huddle ended.',
+    callHint: 'Say "{name}, …" or type below', spoken: 'Language spoken', auto: 'Detect', sugHuddle: 'Start a huddle: share your screen and talk to the agent', source_huddle: 'Huddle',
     source_bot: 'Bot', source_meetily: 'meetily', source_file: 'Recording', gm: 'Google Meet', teams: 'Teams', actSum_after: 'acts after the call', actSum_during: 'acts during the call', actSum_both: 'acts during and after the call', autonomyV: 'autonomy: {v}',
   },
   pt: {
@@ -81,6 +88,13 @@ const I18N = {
     save: 'Salvar', saved: 'Salvo', machine: 'Esta máquina', checking: 'Verificando…', secrets: 'Tokens e chaves: {file}',
     searchPlaceholder: 'Buscar reuniões e conversas', nothingFound: 'Nada encontrado', liveCount: '{n} em reunião', ready: 'pronto', local: 'local',
     lost: 'A conexão com o oma ui caiu.', reload: 'Recarregar', sent: 'Enviado na reunião', ended: 'O agente está saindo da reunião.',
+    startHuddle: 'Iniciar huddle', huddleTitle: 'Iniciar um huddle', yourName: 'Seu nome', shareScreen: 'Compartilhar minha tela',
+    huddleHelp: 'Uma reunião aqui, só você e o agente: compartilhe a tela e fale. Ele escuta, vê a tela e responde aqui, por escrito e em voz alta. Chame pelo nome ("{name}, …") ou escreva para ele.',
+    start: 'Começar', mediaDenied: 'Não foi possível usar a tela ou o microfone:', huddleNotHere: 'Este huddle não está gravando nesta aba.',
+    continueHere: 'Continuar aqui', endHuddle: 'Encerrar huddle', ending: 'Encerrando…', mute: 'Silenciar', unmute: 'Ativar microfone', voiceOn: 'Voz ligada', voiceOff: 'Voz desligada',
+    rec: 'Gravando', askPlaceholder: 'Escreva para o agente (ele responde na hora)', noAsr: 'Nenhuma transcrição configurada: o agente só lê o que você escreve (a gravação é guardada).',
+    liveAsr: 'Transcrição ao vivo ligada', noScreen: 'Só microfone', screenStopped: 'O compartilhamento de tela parou (o microfone continua).', huddleEnded: 'O huddle terminou.',
+    callHint: 'Diga "{name}, …" ou escreva abaixo', spoken: 'Língua falada', auto: 'Detectar', sugHuddle: 'Iniciar um huddle: compartilhe a tela e converse com o agente', source_huddle: 'Huddle',
     source_bot: 'Bot', source_meetily: 'meetily', source_file: 'Gravação', gm: 'Google Meet', teams: 'Teams', actSum_after: 'age depois da call', actSum_during: 'age durante a call', actSum_both: 'age durante e depois da call', autonomyV: 'autonomia: {v}',
   },
 };
@@ -133,6 +147,11 @@ const ICONS = {
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/>',
   code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>',
   wave: '<path d="M2 12h2M6 8v8M10 5v14M14 8v8M18 10v4M22 12h0"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2.5"/><path d="M8 21h8M12 17v4"/>',
+  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/>',
+  micOff: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M3 3l18 18"/>',
+  volume: '<path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
+  volumeOff: '<path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="m22 9-6 6M16 9l6 6"/>',
 };
 
 function icon(name, cls = '') {
@@ -279,9 +298,25 @@ const IN_MEETING = new Set(['joining', 'in_call']);
 const isMeetingUrl = (s) => /^https:\/\/(meet\.google\.com\/|teams\.microsoft\.com\/|teams\.live\.com\/)\S+$/.test(s.trim());
 
 function fold(s) { return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+// The same rule as the server (src/live.ts mentionsAgent).
+function nearWord(a, b) {
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 4 || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+}
 function mentions(text, names) {
-  const f = ` ${fold(text)} `;
-  return names.some((n) => { const x = fold(n); return x.length >= 3 && f.includes(` ${x} `); });
+  const words = fold(text).split(' ').filter(Boolean);
+  return names.some((n) => {
+    const want = fold(n).split(' ').filter(Boolean);
+    if (!want.length || want.join(' ').length < 3) return false;
+    for (let i = 0; i + want.length <= words.length; i++) {
+      if (want.every((w, k) => (want.length > 1 ? nearWord(words[i + k], w) : words[i + k] === w))) return true;
+    }
+    return false;
+  });
 }
 
 function ago(iso) {
@@ -355,7 +390,8 @@ function renderSidebar() {
       h('div', { class: 'sb-icons' }, iconBtn('search', t('search'), openSearch), iconBtn('sidebar', t('closeSidebar'), toggleSidebar))),
     h('nav', { class: 'sb-nav' },
       h('a', { class: `nav-item${r.name === 'home' ? ' active' : ''}`, href: '#/' }, icon('edit'), t('newChat')),
-      h('button', { class: 'nav-item', onclick: () => openJoin() }, icon('video'), t('joinMeeting'))),
+      h('button', { class: 'nav-item', onclick: () => openJoin() }, icon('video'), t('joinMeeting')),
+      h('button', { class: 'nav-item', onclick: () => openHuddleDialog() }, icon('monitor'), t('startHuddle'))),
     h('div', { class: 'sb-scroll' }, section('meetings', t('meetings'), meetings), section('chats', t('chats'), chats)),
     h('div', { class: 'sb-bottom' },
       h('div', { class: 'agent-card' },
@@ -441,7 +477,7 @@ function renderHome() {
   S.pane = null;
   const c = composer({
     placeholder: t('placeholder'), autofocus: true, chip: agentChip(),
-    plus: (el) => menu(el, [['video', t('joinMeeting'), () => openJoin()]]),
+    plus: (el) => menu(el, [['monitor', t('startHuddle'), () => openHuddleDialog()], ['video', t('joinMeeting'), () => openJoin()]]),
     onSend: (text) => homeSend(text),
   });
   const sug = (ic, label, fn) => h('button', { class: 'suggestion', onclick: fn }, icon(ic), label);
@@ -450,6 +486,7 @@ function renderHome() {
     h('h1', { class: 'greeting' }, t('greeting')),
     c.el,
     h('div', { class: 'suggestions' },
+      sug('monitor', t('sugHuddle'), () => openHuddleDialog()),
       sug('video', t('sug1'), () => openJoin()),
       latest ? sug('message', t('sug2'), () => meetingAsk(latest.id, t('msug1'))) : null,
       latest ? sug('sparkle', t('sug3'), () => meetingAsk(latest.id, t('msug2'))) : null,
@@ -548,7 +585,7 @@ function chatPane({ callId = null, empty = null }) {
   const scroller = h('div', { class: 'messages' }, thread);
   const c = composer({
     placeholder: callId ? t('placeholderMeeting') : t('placeholder'), autofocus: true, chip: agentChip(),
-    plus: (el) => menu(el, [['video', t('joinMeeting'), () => openJoin()], ['folder', t('changeFolder'), changeFolder]]),
+    plus: (el) => menu(el, [['monitor', t('startHuddle'), () => openHuddleDialog()], ['video', t('joinMeeting'), () => openJoin()], ['folder', t('changeFolder'), changeFolder]]),
     onSend: (text) => chatSend(text, callId),
     onStop: () => S.chat && api('POST', `/api/chats/${S.chat.id}/stop`, {}).catch((e) => toast(e.message, true)),
   });
@@ -687,6 +724,7 @@ async function refreshMeeting() {
 }
 
 const providerName = (c) => (c.provider === 'google_meet' ? t('gm') : c.provider === 'microsoft_teams' ? t('teams') : t(`source_${c.source}`));
+const isLive = (c) => c.source === 'bot' || c.source === 'huddle';
 
 function meetingHead() {
   const d = S.detail;
@@ -695,7 +733,9 @@ function meetingHead() {
   const outs = ['tasks', 'crm', 'doc'].filter((k) => o[k]).map((k) => `${t(`${k}To`)} → ${o[k]}`);
   const actions = [];
   if (IN_MEETING.has(c.status)) {
-    actions.push(h('button', { class: 'btn', onclick: endMeeting }, icon('phoneOff', 'sm'), t('end')));
+    actions.push(c.source === 'huddle'
+      ? h('button', { class: 'btn', onclick: () => endHuddleFromPage(c.id), id: 'btn-end-huddle' }, icon('phoneOff', 'sm'), t('endHuddle'))
+      : h('button', { class: 'btn', onclick: endMeeting }, icon('phoneOff', 'sm'), t('end')));
     actions.push(h('button', { class: 'btn danger', onclick: discardMeeting }, t('discard')));
   }
   if (d.plan) actions.push(h('button', { class: 'btn', onclick: deliver, id: 'btn-deliver' }, icon('send', 'sm'), t('deliver')));
@@ -709,7 +749,7 @@ function meetingHead() {
       h('div', { class: 'm-actions' }, actions)),
     h('div', { class: 'm-sub' },
       h('span', {}, providerName(c)),
-      c.source === 'bot' ? h('span', {}, t(`actSum_${c.act}`)) : null,
+      isLive(c) ? h('span', {}, t(`actSum_${c.act}`)) : null,
       h('span', {}, t('autonomyV', { v: t(`au_${c.autonomy}`) })),
       outs.length ? h('span', {}, outs.join(' · ')) : null,
       c.repos.length ? h('span', {}, c.repos.join(', ')) : null,
@@ -748,6 +788,7 @@ async function endMeeting() {
 }
 async function discardMeeting() {
   if (!confirm(t('confirmDiscard'))) return;
+  if (H?.id === S.detail.call.id) await stopCapture(false);
   try { S.detail = await api('POST', `/api/calls/${S.detail.call.id}/cancel`, {}); renderMeeting(); } catch (e) { toast(e.message, true); }
 }
 async function deliver() {
@@ -767,9 +808,18 @@ function livePane() {
   const d = S.detail;
   const c = d.call;
   const wrap = h('div', { class: 'chat' });
+  const huddle = c.source === 'huddle' && IN_MEETING.has(c.status);
+  if (huddle) wrap.append(huddleStage(d));
   const scroller = h('div', { class: 'scroll', id: 'live-scroll' }, h('div', { class: 'col', id: 'live-col' }));
   wrap.append(scroller);
-  if (c.source === 'bot' && IN_MEETING.has(c.status)) {
+  if (huddle) {
+    const ask = composer({
+      placeholder: t('askPlaceholder'),
+      onSend: (text) => api('POST', `/api/huddles/${c.id}/ask`, { text }).catch((e) => toast(e.message, true)),
+    });
+    wrap.append(h('div', { class: 'composer-dock' }, ask.el));
+    requestAnimationFrame(renderHuddleControls);
+  } else if (c.source === 'bot' && IN_MEETING.has(c.status)) {
     const say = composer({
       placeholder: t('placeholderSay', { name: c.agent_name }),
       onSend: async (text) => {
@@ -793,12 +843,15 @@ function renderLiveLines(first = false) {
   const c = d.call;
   const stick = first || nearBottom(scroller);
   const kids = [];
-  const inMeeting = c.source === 'bot' && IN_MEETING.has(c.status);
+  const inMeeting = isLive(c) && IN_MEETING.has(c.status);
 
   if (inMeeting) {
     if (c.status === 'joining') kids.push(h('div', { class: 'banner' }, h('span', { class: 'spin' }), t('joiningText')));
     const info = [];
-    if (d.live) {
+    if (c.source === 'huddle') {
+      info.push(d.huddle?.transcribing ? h('span', { class: 'on' }, `● ${t('liveAsr')}`) : h('span', { class: 'off' }, t('noAsr')));
+      if (c.act !== 'after') info.push(h('span', {}, t('callHint', { name: c.agent_name })));
+    } else if (d.live) {
       info.push(d.live.captions === null ? h('span', {}, t('waitingBot'))
         : h('span', { class: d.live.captions ? 'on' : 'off' }, `● ${d.live.captions ? t('captionsOn') : t('captionsOff')}`));
       if (d.live.chat !== null) info.push(h('span', { class: d.live.chat ? 'on' : 'off' }, `● ${d.live.chat ? t('chatOn') : t('chatOff')}`));
@@ -951,6 +1004,343 @@ function planPane() {
   }
   return scroller;
 }
+
+// ── Huddle: a meeting in this page ──────────────────────────────────────────
+// The page records the screen and the microphone (MediaRecorder, uploaded every
+// 4 s), sends the microphone at 16 kHz for the live transcript, a picture of
+// the screen every few seconds, and reads the agent's answers aloud.
+
+let H = null; // the huddle recording in this tab
+
+function pickMime(hasVideo) {
+  const list = hasVideo
+    ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
+    : ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+  return list.find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) ?? '';
+}
+
+async function getMedia(share) {
+  const screen = share ? await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: true }) : null;
+  try {
+    const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    return { screen, mic };
+  } catch (e) {
+    screen?.getTracks().forEach((tr) => tr.stop());
+    throw e;
+  }
+}
+
+async function upload(id, kind, blob, q) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await fetch(`/api/huddles/${id}/${kind}${q ? `?${new URLSearchParams(q)}` : ''}`, {
+        method: 'POST',
+        headers: { 'x-oma-token': TOKEN, 'content-type': kind === 'screen' ? 'image/jpeg' : 'application/octet-stream' },
+        body: blob,
+      });
+      if (r.ok) return;
+      const j = await r.json().catch(() => ({}));
+      // Over (ended elsewhere, cancelled): stop recording here.
+      if (r.status === 404 || /over|ending/.test(j.error ?? '')) { if (H?.id === id && !H.ending) stopCapture(false); return; }
+      if (r.status < 500) return;
+    } catch { /* the server is away for a moment: try again */ }
+    await new Promise((res) => setTimeout(res, 1000 * (attempt + 1)));
+  }
+}
+
+function startRecorder(cur, withVideo) {
+  const video = withVideo ? cur.screen?.getVideoTracks().find((tr) => tr.readyState === 'live') : null;
+  const mime = pickMime(!!video);
+  const rec = new MediaRecorder(new MediaStream([...(video ? [video] : []), ...cur.mix.stream.getAudioTracks()]), mime ? { mimeType: mime, videoBitsPerSecond: 2_000_000 } : undefined);
+  const part = cur.part;
+  const ext = (rec.mimeType || mime).includes('mp4') ? 'mp4' : 'webm';
+  const started = Date.now();
+  let seq = 0;
+  rec.ondataavailable = (e) => {
+    if (!e.data.size) return;
+    const q = { part, seq: seq++, ext, started };
+    cur.mq = cur.mq.then(() => upload(cur.id, 'media', e.data, q));
+  };
+  // A recorder that stops by itself (the screen share ended, say): go on with
+  // the microphone in a new part.
+  rec.onstop = () => {
+    if (cur.ending || H !== cur || cur.rec !== rec) return;
+    cur.part++;
+    cur.rec = startRecorder(cur, false);
+  };
+  rec.start(4000);
+  return rec;
+}
+
+async function beginCapture(id, screen, mic, part) {
+  const ctx = new AudioContext();
+  await ctx.audioWorklet.addModule('/pcm-worklet.js');
+  const micSrc = ctx.createMediaStreamSource(mic);
+  const tap = new AudioWorkletNode(ctx, 'oma-pcm');
+  const sink = ctx.createGain();
+  sink.gain.value = 0;
+  micSrc.connect(tap);
+  tap.connect(sink);
+  sink.connect(ctx.destination);
+  // The recording's sound: the microphone, plus the shared tab's audio if any.
+  const mix = ctx.createMediaStreamDestination();
+  micSrc.connect(mix);
+  if (screen?.getAudioTracks().length) ctx.createMediaStreamSource(new MediaStream(screen.getAudioTracks())).connect(mix);
+  const preview = h('video', { autoplay: true, playsinline: true, class: 'screen-video' });
+  preview.muted = true;
+  if (screen) { preview.srcObject = screen; preview.play().catch(() => {}); }
+  const cur = {
+    id, screen, mic, ctx, mix, part, preview, rec: null,
+    mq: Promise.resolve(), aq: Promise.resolve(), pcm: [], pcmLen: 0, pos: 0,
+    muted: false, speaking: 0, voice: localStorage.getItem('oma.voice') !== '0', ending: false, shot: null,
+    screenLive: !!screen?.getVideoTracks().length,
+  };
+  H = cur;
+  const ratio = ctx.sampleRate / 16000;
+  tap.port.onmessage = (e) => onPcm(cur, e.data, ratio);
+  cur.rec = startRecorder(cur, true);
+  const vt = screen?.getVideoTracks()[0];
+  if (vt) {
+    vt.addEventListener('ended', () => {
+      if (H !== cur || cur.ending) return;
+      cur.screenLive = false;
+      toast(t('screenStopped'));
+      if (S.route.name === 'meeting' && S.detail?.call.id === id && S.tab === 'live') renderMeetingBody();
+    });
+    cur.shot = setInterval(() => snapshot(cur), 4000);
+    setTimeout(() => snapshot(cur), 1000);
+  }
+}
+
+/** The microphone at 16 kHz, 16-bit: uploaded about once a second. Nothing is
+ *  sent while muted or while the page speaks (the agent must not hear itself). */
+function onPcm(cur, data, ratio) {
+  if (cur.ending || H !== cur) return;
+  if (cur.muted || cur.speaking > 0) { cur.pos = 0; return; }
+  const out = new Int16Array(Math.max(0, Math.floor((data.length - cur.pos) / ratio)));
+  let p = cur.pos;
+  let n = 0;
+  while (p + ratio <= data.length && n < out.length) {
+    let s = 0;
+    let k = 0;
+    for (let i = Math.floor(p); i < Math.floor(p + ratio); i++) { s += data[i]; k++; }
+    const v = Math.max(-1, Math.min(1, k ? s / k : 0));
+    out[n++] = v < 0 ? v * 0x8000 : v * 0x7fff;
+    p += ratio;
+  }
+  cur.pos = Math.max(0, p - data.length);
+  cur.pcm.push(out.subarray(0, n));
+  cur.pcmLen += n;
+  if (cur.pcmLen >= 16000) flushPcm(cur);
+}
+
+function flushPcm(cur) {
+  if (!cur.pcmLen) return;
+  const all = new Int16Array(cur.pcmLen);
+  let o = 0;
+  for (const c of cur.pcm) { all.set(c, o); o += c.length; }
+  cur.pcm = [];
+  cur.pcmLen = 0;
+  cur.aq = cur.aq.then(() => upload(cur.id, 'audio', new Blob([all.buffer])));
+}
+
+async function snapshot(cur) {
+  const v = cur.preview;
+  if (H !== cur || cur.ending || !cur.screenLive || !v.videoWidth) return;
+  const w = Math.min(1280, v.videoWidth);
+  const hh = Math.round((v.videoHeight * w) / v.videoWidth);
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = hh;
+  c.getContext('2d').drawImage(v, 0, 0, w, hh);
+  const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.72));
+  if (blob) upload(cur.id, 'screen', blob);
+}
+
+/** Stop recording here; with `end`, the huddle ends (what is left of the
+ *  microphone is transcribed, then the call is processed). */
+async function stopCapture(end) {
+  const cur = H;
+  if (!cur || cur.ending) return;
+  cur.ending = true;
+  clearInterval(cur.shot);
+  window.speechSynthesis?.cancel();
+  if (cur.rec && cur.rec.state !== 'inactive') await new Promise((res) => { cur.rec.addEventListener('stop', res, { once: true }); cur.rec.stop(); });
+  flushPcm(cur);
+  await cur.mq;
+  await cur.aq;
+  for (const tr of [...(cur.screen?.getTracks() ?? []), ...cur.mic.getTracks()]) tr.stop();
+  cur.ctx.close().catch(() => {});
+  if (H === cur) H = null;
+  if (end) {
+    try { await api('POST', `/api/huddles/${cur.id}/end`, {}); } catch (e) { toast(e.message, true); }
+  }
+  if (S.route.name === 'meeting' && S.detail?.call.id === cur.id) await refreshMeeting();
+}
+
+async function endHuddleFromPage(id) {
+  const b = $('#btn-end-huddle');
+  if (b) { b.disabled = true; b.textContent = t('ending'); }
+  if (H?.id === id) await stopCapture(true);
+  else {
+    try { await api('POST', `/api/huddles/${id}/end`, {}); } catch (e) { toast(e.message, true); }
+    await refreshMeeting();
+  }
+  renderMeeting();
+}
+
+const ttsLang = () => ({ pt: 'pt-BR', es: 'es-ES', en: 'en-US' })[(S.detail?.call.language ?? LANG).slice(0, 2)] ?? (S.detail?.call.language ?? LANG);
+
+/** Read an answer aloud (links and markdown left out). */
+function speak(cur, text) {
+  if (!cur.voice || !window.speechSynthesis) return;
+  const clean = text.replace(/https?:\/\/\S+/g, 'link').replace(/[*_`#>|]/g, '').trim();
+  if (!clean) return;
+  const u = new SpeechSynthesisUtterance(clean);
+  u.lang = ttsLang();
+  let start = 0;
+  u.onstart = () => { cur.speaking++; start = Date.now(); };
+  const done = () => {
+    if (!start) return;
+    const s = start;
+    start = 0;
+    // A moment more: the room's echo.
+    setTimeout(() => { cur.speaking = Math.max(0, cur.speaking - 1); }, 400);
+    api('POST', `/api/huddles/${cur.id}/speaking`, { start: s, end: Date.now() }).catch(() => {});
+  };
+  u.onend = done;
+  u.onerror = done;
+  speechSynthesis.speak(u);
+}
+
+function onHuddleEvent(d) {
+  const cur = H;
+  if (d.type === 'say' && cur?.id === d.id) speak(cur, d.text);
+  if (d.type === 'leave' && cur?.id === d.id) { stopCapture(!d.discard); toast(t('huddleEnded')); }
+  if (d.type === 'ended' && cur?.id === d.id && !cur.ending) stopCapture(false);
+}
+
+function huddleStage(d) {
+  const c = d.call;
+  if (H?.id !== c.id) {
+    return h('div', { class: 'stage' }, h('div', { class: 'banner' }, icon('alert', 'sm'), t('huddleNotHere'),
+      h('button', { class: 'btn blue', onclick: () => continueHere(c.id) }, t('continueHere')),
+      h('button', { class: 'btn', onclick: () => endHuddleFromPage(c.id) }, t('endHuddle'))));
+  }
+  return h('div', { class: 'stage' },
+    h('div', { class: 'screen-box' }, H.screenLive ? H.preview : h('div', { class: 'screen-empty' }, icon('mic'), t('noScreen'))),
+    h('div', { class: 'huddle-controls', id: 'huddle-controls' }));
+}
+
+function renderHuddleControls() {
+  const el = $('#huddle-controls');
+  const cur = H;
+  if (!el || !cur) return;
+  el.replaceChildren(
+    h('span', { class: 'rec' }, h('span', { class: 'dot in_call' }), t('rec'), h('span', { id: 'rec-clock' })),
+    h('button', {
+      class: `btn${cur.muted ? ' danger' : ''}`,
+      onclick: () => { cur.muted = !cur.muted; cur.mic.getAudioTracks().forEach((tr) => { tr.enabled = !cur.muted; }); renderHuddleControls(); },
+    }, icon(cur.muted ? 'micOff' : 'mic', 'sm'), cur.muted ? t('unmute') : t('mute')),
+    h('button', {
+      class: 'btn',
+      onclick: () => { cur.voice = !cur.voice; localStorage.setItem('oma.voice', cur.voice ? '1' : '0'); if (!cur.voice) speechSynthesis.cancel(); renderHuddleControls(); },
+    }, icon(cur.voice ? 'volume' : 'volumeOff', 'sm'), cur.voice ? t('voiceOn') : t('voiceOff')));
+  tickClock();
+}
+
+function tickClock() {
+  const el = $('#rec-clock');
+  const j = Date.parse(S.detail?.call.joined_at ?? '');
+  if (el && Number.isFinite(j)) el.textContent = ` ${clock((Date.now() - j) / 1000)}`;
+}
+setInterval(tickClock, 1000);
+
+async function continueHere(id) {
+  let media;
+  try { media = await getMedia(true); } catch (e) { toast(`${t('mediaDenied')} ${e.message}`, true); return; }
+  try {
+    await beginCapture(id, media.screen, media.mic, (S.detail?.huddle?.parts ?? 0) + 1);
+    renderMeeting();
+  } catch (e) {
+    for (const tr of [...(media.screen?.getTracks() ?? []), ...media.mic.getTracks()]) tr.stop();
+    toast(e.message, true);
+  }
+}
+
+function openHuddleDialog() {
+  const st = S.state;
+  const def = st?.defaults ?? {};
+  let act = 'both';
+  const help = h('small', {}, t(`actHelp_${act}`));
+  const brainHint = h('div', { class: 'banner hidden' }, icon('alert', 'sm'), t('noBrain'),
+    st?.agent?.kind === 'claude' && st.agent.ready ? h('button', { type: 'button', class: 'btn blue', onclick: async () => { await useClaudeCode(); syncBrain(); } }, t('useClaude')) : null);
+  const syncBrain = () => brainHint.classList.toggle('hidden', act === 'after' || !!S.state?.model.configured);
+  const seg = h('div', { class: 'seg' }, ['after', 'during', 'both'].map((a) => h('button', {
+    type: 'button', class: a === act ? 'on' : '',
+    onclick: (e) => { act = a; seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === e.currentTarget)); help.textContent = t(`actHelp_${a}`); syncBrain(); },
+  }, t(`act_${a}`))));
+  const targets = (list) => [['none', t('none')], ...list.map((x) => [x, x])];
+  const canShare = !!navigator.mediaDevices?.getDisplayMedia;
+  const dlg = dialog(t('huddleTitle'), [
+    h('div', { class: 'muted', style: 'font-size:14px' }, t('huddleHelp', { name: def.agent_name ?? 'Meeting Agent' })),
+    h('div', { class: 'grid2' },
+      h('label', { class: 'field' }, h('span', {}, `${t('title')} (${t('optional')})`), h('input', { class: 'input', name: 'title', autocomplete: 'off' })),
+      h('label', { class: 'field' }, h('span', {}, t('yourName')), h('input', { class: 'input', name: 'speaker', value: localStorage.getItem('oma.name') ?? '', autocomplete: 'off' }))),
+    h('div', { class: 'grid2' },
+      h('label', { class: 'row', style: 'justify-content:flex-start;font-size:14px' },
+        h('input', { type: 'checkbox', name: 'share', checked: canShare, disabled: !canShare }), t('shareScreen')),
+      h('label', { class: 'field' }, h('span', {}, t('spoken')),
+        select('spoken', [['', t('auto')], ['pt', 'Português'], ['en', 'English'], ['es', 'Español']], localStorage.getItem('oma.spoken') ?? ''))),
+    h('div', { class: 'field' }, h('span', {}, t('whenActs')), seg, help),
+    brainHint,
+    h('div', { class: 'grid3' },
+      h('label', { class: 'field' }, h('span', {}, t('tasksTo')), select('tasks', targets(st?.targets.tasks ?? []), def.tasks ?? 'none')),
+      h('label', { class: 'field' }, h('span', {}, t('crmTo')), select('crm', targets(st?.targets.crm ?? []), def.crm ?? 'none')),
+      h('label', { class: 'field' }, h('span', {}, t('docTo')), select('doc', targets(st?.targets.doc ?? []), def.doc ?? 'none'))),
+    h('label', { class: 'field' }, h('span', {}, t('autonomy')), select('autonomy', [['suggest', t('au_suggest')], ['issues', t('au_issues')], ['prs', t('au_prs')]], def.autonomy)),
+    h('details', { class: 'more' }, h('summary', {}, t('more')),
+      h('div', { class: 'grid2' },
+        h('label', { class: 'field' }, h('span', {}, t('repo')), h('input', { class: 'input', name: 'repo', placeholder: 'acme/app', autocomplete: 'off' })),
+        h('label', { class: 'field' }, h('span', {}, t('workdir')), h('input', { class: 'input', name: 'workdir', value: def.workdir ?? '', autocomplete: 'off' })))),
+  ], [
+    h('button', { type: 'button', class: 'btn', onclick: () => $('#dialog').close() }, t('cancel')),
+    h('button', { type: 'submit', class: 'btn primary', id: 'huddle-go' }, icon('monitor', 'sm'), t('start')),
+  ]);
+  syncBrain();
+  const form = $('form', dlg);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (H) { toast(t('huddleNotHere'), true); return; }
+    const f = new FormData(form);
+    const go = $('#huddle-go');
+    go.disabled = true;
+    // The browser asks for the screen and the microphone first (it needs the click).
+    let media;
+    try { media = await getMedia(f.get('share') === 'on'); } catch (err) { toast(`${t('mediaDenied')} ${err.message}`, true); go.disabled = false; return; }
+    const speaker = String(f.get('speaker') ?? '').trim();
+    localStorage.setItem('oma.name', speaker);
+    localStorage.setItem('oma.spoken', String(f.get('spoken') ?? ''));
+    try {
+      const d = await api('POST', '/api/huddles', {
+        title: f.get('title'), speaker, act, autonomy: f.get('autonomy'), tasks: f.get('tasks'), crm: f.get('crm'), doc: f.get('doc'),
+        repo: f.get('repo'), workdir: f.get('workdir'), spoken: f.get('spoken') || null,
+      });
+      await beginCapture(d.call.id, media.screen, media.mic, 1);
+      dlg.close();
+      await loadCalls();
+      location.hash = `#/m/${d.call.id}/live`;
+    } catch (err) {
+      for (const tr of [...(media.screen?.getTracks() ?? []), ...media.mic.getTracks()]) tr.stop();
+      toast(err.message, true);
+      go.disabled = false;
+    }
+  });
+}
+
+window.addEventListener('beforeunload', (e) => {
+  if (H && !H.ending) { e.preventDefault(); e.returnValue = ''; }
+});
 
 // ── Dialogs ─────────────────────────────────────────────────────────────────
 
@@ -1122,6 +1512,7 @@ function connectEvents() {
     if (S.route.name === 'meeting' && S.detail?.call.id === id) refreshMeeting();
   });
   es.addEventListener('chat', (e) => onChatEvent(JSON.parse(e.data)));
+  es.addEventListener('huddle', (e) => onHuddleEvent(JSON.parse(e.data)));
   es.onerror = () => {
     if (es.readyState !== EventSource.CLOSED) return;
     $('#toasts').replaceChildren(h('div', { class: 'toast error' }, t('lost'), ' ', h('button', { style: 'text-decoration:underline', onclick: () => location.reload() }, t('reload'))));
