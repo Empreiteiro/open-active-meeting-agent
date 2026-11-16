@@ -10,12 +10,21 @@ import type { Segment } from '../types.js';
 
 export class AsrError extends Error {}
 
+/** What whisper "hears" in silence and noise: "Thank you.", "Obrigado.", "[Música]"… */
+export const NOISE_TEXT = /^(\s*[[(].*[\])]\s*|\s*(obrigad[oa]( a todos)?|thank you( for watching)?|thanks for watching|legendas pela comunidade amara\.org|subtitles by the amara\.org community|tchau|bye|you)[.!]?\s*)$/i;
+
+/** Drop those: a bracketed sound, or one of the phrases stretched over a long
+ *  quiet stretch (a real "thank you" takes a second or two). */
+export function dropNoise(segs: Segment[]): Segment[] {
+  return segs.filter((s) => !(NOISE_TEXT.test(s.text) && (/^\s*[[(]/.test(s.text) || s.end - s.start > 6)));
+}
+
 /** Pieces sent to an API: 10 min of 16 kHz mono WAV ≈ 19 MB (under the usual 25 MB cap). */
 const API_CHUNK_SEC = 600;
 
 export async function transcribe(input: string, workDir: string, language: string | null): Promise<Segment[]> {
-  if (config.asr === 'whisper-cpp') return whisperCpp(input, workDir, language);
-  if (config.asr === 'openai') return openaiCompatible(input, workDir, language);
+  if (config.asr === 'whisper-cpp') return dropNoise(await whisperCpp(input, workDir, language));
+  if (config.asr === 'openai') return dropNoise(await openaiCompatible(input, workDir, language));
   throw new AsrError('No transcription configured. Set OMA_WHISPER_MODEL (whisper.cpp, local) or OMA_ASR_API_KEY / OPENAI_API_KEY (OpenAI-compatible API). meetily imports need none: they bring their own transcript.');
 }
 
