@@ -14,6 +14,11 @@ while the agent is already in the meeting), or by default with `OMA_ACT`.
 
 ## How it hears and how to call it
 
+(In a **huddle** — a meeting in the web UI — it hears the microphone through
+your transcription instead of the captions, sees the shared screen, and reads
+its answers aloud: [ui.md](ui.md#huddle-a-meeting-in-the-ui). The rest below
+applies the same way.)
+
 The bot turns on the meeting's own captions and reads them as turns (who said
 what), and reads the chat. Someone addresses the agent by **saying its name**
 ("Meeting Agent, create a task to fix the login page") or **mentioning it in

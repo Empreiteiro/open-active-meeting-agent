@@ -22,6 +22,8 @@ src/
   sources/bot.ts      the bot container: start, status, leave, kill, outputs
   sources/meetily.ts  meetily's SQLite (read-only): meetings, timed transcript, notes, audio
   sources/screen.ts   local screen capture (ffmpeg avfoundation / x11grab / gdigrab)
+  sources/huddle.ts   a meeting in the web UI: the page's uploads → the bot's files; live
+                      transcript (whisper on the microphone, turn by turn); the recording after it
   asr/                transcription (whisper.cpp, OpenAI-compatible) + speaker names from the bot's timeline
   media/ffmpeg.ts     probe, 16 kHz audio, changed-screen detection (mpdecimate), frames
   plan/               prompt + rules, normalization, building (model or host) with a retry for empty plans
@@ -80,6 +82,14 @@ The bot never talks to a server. Its volume (`calls/<id>/bot`, mounted at `/out`
 | `exit.json` | bot | why it left (`ended`, `manual`, `alone`, `max_duration`, `interrupted`…), seconds in the call, whether it saw anyone |
 
 A container that disappears without `done` is processed with whatever it left.
+
+A **huddle** (a meeting in the web UI) has no container: its page records and
+uploads, and the UI server writes the same files — `status.json` (with `at`, a
+heartbeat), caption turns from whisper on the microphone, the agent's answers
+marked `sent` and pushed to the page — plus `huddle.json` and the recording
+parts. The worker follows it like a bot call (a missing heartbeat instead of a
+missing container), and `huddleRecording` joins the parts and writes the
+timeline before the usual processing.
 The bot starts with `LIVE_CHAT=1` when the call acts during the meeting (the
 chat panel opens as it gets in; otherwise only when it has something to post).
 

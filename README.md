@@ -11,7 +11,9 @@ the code: pull requests.
 It runs **locally** and plugs into **any MCP client** — Claude Code (as a
 plugin), Claude Desktop, Cursor, VS Code, Windsurf, Codex, Gemini CLI — and has
 its own **web UI** (`oma ui`): a ChatGPT-style chat with your local agent
-(Claude Code, no API key) beside your meetings, their live transcript and plans.
+(Claude Code, no API key) beside your meetings, their live transcript and plans
+— and **huddles**: a meeting right in the UI, where you share your screen and
+talk, and the agent sees it, hears you and answers out loud.
 
 ```
  you share the screen and explain          after the call
@@ -34,6 +36,8 @@ its own **web UI** (`oma ui`): a ChatGPT-style chat with your local agent
    from the meeting's own captions. Someone admits it from the lobby. Or skip
    the bot: record the meeting yourself with [meetily](https://github.com/Zackriya-Solutions/meetily)
    (+ `screen_capture` for the screen) and import it, or import any recording.
+   Or hold the meeting in the web UI itself: a **huddle**, just you and the
+   agent ([docs/ui.md](docs/ui.md#huddle-a-meeting-in-the-ui)).
 2. **In the meeting (optional).** With `act: during` or `both`, it answers in
    the chat when someone says its name or mentions it: replies, takes notes for
    the plan, and creates the tasks people ask for right away — see
@@ -137,7 +141,9 @@ make ui          # or: oma ui — opens http://127.0.0.1:4141
 
 A chat in your browser, in the style of ChatGPT: ask your local agent (Claude
 Code by default) about your meetings, paste a meeting link to send the agent
-in, follow what is said live, read and deliver the plan. Claude Code answers
+in, follow what is said live, read and deliver the plan. **Start a huddle** to
+meet the agent right there: share your screen, talk, and it answers — written
+and out loud. Claude Code answers
 with the meeting tools, its permission requests show up in the chat (allow /
 deny), and nothing needs an API key. See [docs/ui.md](docs/ui.md).
 
@@ -347,6 +353,7 @@ Environment variables, or the same keys in `~/.open-meeting-agent/config.json`.
   document.md       the meeting document (doc target "file" without OMA_DOC_DIR)
   bot/              the bot's volume: status.json, control.json, live.jsonl, commands.jsonl,
                     audio.m4a, recording.mp4, timeline.json
+                    a huddle's too, written by the UI: huddle.json, rec-<n>.webm, live.pcm, screen.jpg
   live-state.json   live-watch.json   the agent in the meeting
   log.txt  worker.log  agent.log
 ~/.open-meeting-agent/ui/chats/<id>.json   the web UI's chats (Claude Code resumes its own session)
@@ -376,7 +383,13 @@ Early (0.1). What has been exercised:
   meeting tools, streamed; a permission asked in the page and denied; the
   session resumed; Claude Code as the planning model, reading a frame. Its API,
   events and permission round trip are also tested against a stand-in Claude
-  Code (`test/ui.test.ts`).
+  Code (`test/ui.test.ts`);
+- a huddle in the page with stand-in screen and microphone streams (the
+  browser's capture prompts can't be driven here): a spoken question went
+  through the page's audio path, whisper.cpp and the live loop, and Claude
+  Code answered from the shared screen; a typed question; the answers read
+  aloud; the end, the transcript split between the person and the agent, the
+  frame and the plan. The HTTP side is tested too (`test/huddle.test.ts`).
 
 Not yet run here: the bot in a live Google Meet / Teams call (its join and
 speaker logic come from Queryable's production bot; the live captions-as-text
